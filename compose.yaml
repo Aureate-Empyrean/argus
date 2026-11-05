@@ -1,0 +1,9 @@
+name: argus
+services:
+  image:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: argus:0.1.0
+    network_mode: none
+    entrypoint: [python, -c, "print('Install manifest.local.json in Nexus; the broker owns the runtime.')"]

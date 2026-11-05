@@ -1,0 +1,10 @@
+.git
+.venv
+node_modules
+artifacts
+.data
+.pytest_cache
+.ruff_cache
+.agents
+.aws
+.codex

@@ -1,0 +1,175 @@
+/* Aureate Empyrean shared design tokens — version 2.1 (version 2 plus additions).
+   Canonical source: architecture/design/tokens.css (ADR 0008, ADR 0012).
+   Applications vendor this file unchanged and load it before their own styles.
+   A module overrides only the accent family (--accent*, --focus) and --font-display
+   in its own :root. Never edit a vendored copy; change this file and re-vendor.
+   Version 2 is a strict superset of version 1: every v1 name keeps its v1 value. */
+
+:root {
+  color-scheme: dark;
+
+  /* ── v1 ─────────────────────────────────────────────────────────── */
+
+  /* Shared neutrals (design-system.md) */
+  --void: #090a0c;
+  --obsidian: #101216;
+  --graphite: #191c22;
+  --elevated: #222630;
+  --surface-1: #0d0f12;
+  --surface-2: #14161b;
+
+  /* Text */
+  --text: #f2f0ea;
+  --text-2: #a7a9af;
+  --text-3: #70747d;
+  /* Metadata: between Secondary and Muted, readable at 11-13 px (AA). */
+  --text-meta: color-mix(in srgb, var(--text-2) 45%, var(--text-3));
+
+  /* Lines, interaction and depth */
+  --line: rgba(255, 255, 255, 0.075);
+  --line-2: rgba(255, 255, 255, 0.12);
+  --hover: rgba(255, 255, 255, 0.045);
+  --press: rgba(255, 255, 255, 0.07);
+  --shadow: 0 20px 56px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.38);
+
+  /* Aureate ecosystem identity: ecosystem marks in every application */
+  --aureate: #d6ad60;
+  --aureate-bright: #f0d58a;
+  --aureate-deep: #8c6734;
+
+  /* Module accent family. Defaults are the ecosystem gold (Nexus); modules override. */
+  --accent: var(--aureate);
+  --accent-hi: var(--aureate-bright);
+  --accent-deep: var(--aureate-deep);
+  --accent-hover: rgba(214, 173, 96, 0.09);
+  --accent-soft: rgba(214, 173, 96, 0.14);
+  --accent-sel: rgba(214, 173, 96, 0.18);
+  --accent-line: rgba(214, 173, 96, 0.45);
+  --focus: var(--accent-hi);
+
+  /* Semantic states: identical in every application */
+  --good: #8fc2a9;
+  --good-soft: rgba(143, 194, 169, 0.12);
+  --danger: #ec9da3;
+  --danger-soft: rgba(236, 157, 163, 0.1);
+  --danger-strong: #b8454f;
+  --warn: #e8b36f;
+
+  /* Type. Roboto (SIL OFL 1.1) is bundled by each application. */
+  --font-ui: "Roboto", "Noto Sans", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  --font-mono: "Roboto Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 230ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Shape */
+  --radius: 10px;
+  --radius-sm: 7px;
+
+  /* ── v2 additions (ADR 0012) ────────────────────────────────────── */
+
+  /* Surface hierarchy: canvas, then panes, then content blocks, then raised layers. */
+  --canvas: var(--void);
+  --layer-1: var(--obsidian);
+  --layer-2: var(--graphite);
+  --layer-3: var(--elevated);
+  --warn-soft: rgba(232, 179, 111, 0.12);
+
+  /* Translucent materials. Floating layers above content only (menus, popovers, drawers,
+     dialogs, toasts, sticky headers). Never for reading surfaces. Opaque fallback is
+     --layer-3 (applied by foundation.css when blur is unsupported or unwanted). */
+  --glass-1: rgba(18, 20, 25, 0.74);
+  --glass-2: rgba(30, 33, 41, 0.8);
+  --glass-line: rgba(255, 255, 255, 0.09);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --blur-1: 14px;
+  --blur-2: 26px;
+  --glass-saturate: 135%;
+
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.42), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-3: var(--shadow);
+
+  /* Ambient accent glow: at most one per screen, behind content. */
+  --ambient-strength: 10%;
+
+  /* Type scale (px; desktop-first, compact) */
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --leading-tight: 1.2;
+  --leading: 1.5;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-tight: -0.012em;
+  --tracking-caps: 0.08em;
+
+  /* Spacing: 4 px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Radii (v1 --radius-sm 7px and --radius 10px keep their values) */
+  --radius-xs: 5px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Controls */
+  --control-sm: 28px;
+  --control: 34px;
+  --control-lg: 40px;
+
+  /* Focus: a visible ring that survives any background */
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--focus);
+
+  /* Layers */
+  --z-sticky: 10;
+  --z-drawer: 40;
+  --z-dialog: 50;
+  --z-menu: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+
+  /* Motion v2: larger spatial moves (drawers, page changes) */
+  --motion-spatial: 240ms;
+
+  /* ── v2.1 additions (ADR 0014): liquid-glass surfaces and atmosphere ─ */
+
+  /* Secondary atmosphere hue, part of the module accent family; modules override. */
+  --accent-2: var(--aureate-deep);
+  --accent-glow: color-mix(in srgb, var(--accent) 36%, transparent);
+  /* Elevated content surfaces: translucent enough to show the atmosphere, dark enough
+     that body text keeps at least 10:1 contrast over any atmosphere colour. */
+  --surface-glass: rgba(14, 16, 21, 0.58);
+  --surface-glass-strong: rgba(19, 21, 27, 0.82);
+  --surface-solid: #111318;
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --edge: rgba(255, 255, 255, 0.085);
+  --edge-strong: rgba(255, 255, 255, 0.14);
+  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --blur-surface: 22px;
+  --shadow-glow: 0 10px 30px -6px var(--accent-glow);
+  --shadow-float: 0 24px 60px -20px rgba(0, 0, 0, 0.75), 0 2px 6px rgba(0, 0, 0, 0.35);
+  --text-display: 44px;
+  --weight-light: 300;
+}

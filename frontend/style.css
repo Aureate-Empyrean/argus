@@ -1,0 +1,557 @@
+/* Argus: the user's own photographs. Loaded after aureate-tokens.css and aureate-foundation.css,
+   whose primitives it reuses. Tokens follow Meridian's warm-graphite and copper layer so the two
+   modules read as one ecosystem. */
+:root {
+  /* Accent family: copper */
+  --accent: #c48663;
+  --accent-hi: #e3b497;
+  --accent-deep: #8c5638;
+  --accent-2: #5d7389;
+  --accent-hover: rgba(196, 134, 99, 0.09);
+  --accent-soft: rgba(196, 134, 99, 0.14);
+  --accent-sel: rgba(196, 134, 99, 0.2);
+  --accent-line: rgba(196, 134, 99, 0.45);
+  --focus: var(--accent-hi);
+
+  /* Surfaces, darkest to lightest. Each step has one job (docs/DESIGN.md):
+     canvas (behind everything) → well (recessed inputs) → sheet (the workspace) →
+     band (a screen's identity header) → raised (lists, tiles, the context column) →
+     overlay (menus, dialogs, search results). */
+  --m-canvas: #0c0a09;
+  --m-well: #110f0d;
+  --m-sheet: #151210;
+  --m-band: #1a1714;
+  --m-raised: #1e1a17;
+  --m-raised-hover: #231f1b;
+  --m-overlay: #27221e;
+  --m-hover: rgba(255, 236, 222, 0.045);
+  --m-press: rgba(255, 236, 222, 0.075);
+  --m-line: rgba(255, 236, 222, 0.075);
+  --m-line-strong: rgba(255, 236, 222, 0.13);
+
+  /* Text: every level stays readable on the sheet (contrast ≥ 5.5:1 for --m-text-3) */
+  --m-text: #f2ede9;
+  --m-text-2: #cbc3bc;
+  --m-text-3: #a59b93;
+  --m-accent-text: #e3ae8e;
+  /* Merge decisions use the slate secondary accent, so they never read as copper "new". */
+  --m-merge-text: #9bb3c9;
+
+  /* Type scale. Nothing a person reads is smaller than 12px (uppercase labels only). */
+  --m-fs-name: 38px;
+  --m-fs-display: 34px;
+  --m-fs-title: 26px;
+  --m-fs-section: 15px;
+  --m-fs-value: 16px;
+  --m-fs-body: 15px;
+  --m-fs-meta: 14px;
+  --m-fs-small: 13px;
+  --m-fs-label: 12px;
+
+  /* Spacing */
+  --m-s1: 4px;
+  --m-s2: 8px;
+  --m-s3: 12px;
+  --m-s4: 16px;
+  --m-s5: 20px;
+  --m-s6: 24px;
+  --m-s7: 32px;
+  --m-s8: 40px;
+  --m-s9: 56px;
+
+  /* Radius */
+  --m-r-chip: 6px;
+  --m-r-control: 9px;
+  --m-r-group: 12px;
+  --m-r-list: 14px;
+  --m-r-surface: 16px;
+
+  /* Motion */
+  --m-fast: 120ms;
+  --m-hover-time: 150ms;
+  --m-page: 220ms;
+  --m-panel: 260ms;
+  --m-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --m-ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --m-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Layout */
+  --rail: 232px;
+  --frame: 12px;
+  --m-context: 360px;
+  --m-page-max: 1760px;
+  --m-page-pad: 40px;
+}
+
+html,
+body {
+  height: 100%;
+}
+html {
+  background: var(--m-canvas);
+}
+body {
+  margin: 0;
+  background:
+    radial-gradient(60vw 55vh at 6% -12%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 66%),
+    radial-gradient(50vw 55vh at 102% 108%, color-mix(in srgb, var(--accent-2) 18%, transparent), transparent 64%),
+    linear-gradient(180deg, #110f0d, var(--m-canvas) 60%);
+  color: var(--m-text);
+  font-family: var(--font-ui);
+  font-size: var(--m-fs-body);
+  line-height: 1.5;
+}
+[hidden] {
+  display: none !important;
+}
+.i {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.splash {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  margin: 0;
+  color: var(--m-text-3);
+}
+
+/* Shell: a rail of destinations and one workspace, as in the other AE applications. */
+.app {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--frame);
+  height: 100vh;
+  padding: var(--frame);
+  box-sizing: border-box;
+}
+.rail,
+.sheet {
+  border-radius: var(--m-r-surface);
+  background: color-mix(in srgb, var(--m-sheet) 92%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    inset 0 0 0 1px var(--m-line),
+    0 24px 60px -34px rgba(0, 0, 0, 0.8);
+}
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 10px 10px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 2px 8px 18px;
+  font-size: 17px;
+  font-weight: var(--weight-semibold);
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(150deg, var(--accent-hi), var(--accent) 50%, var(--accent-deep));
+  color: #241309;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-radius: var(--m-r-control);
+  background: transparent;
+  color: var(--m-text-2);
+  font: inherit;
+  font-size: var(--m-fs-meta);
+  text-align: left;
+  cursor: pointer;
+}
+.nav-item:hover {
+  background: var(--m-hover);
+  color: var(--m-text);
+}
+.nav-item[aria-current="page"] {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 7%, transparent));
+  color: var(--m-text);
+  box-shadow: inset 2.5px 0 0 var(--accent);
+}
+.nav-item .count {
+  margin-left: auto;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+  font-variant-numeric: tabular-nums;
+}
+.nav-item:focus-visible,
+.tile:focus-visible,
+.drop:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.sheet {
+  min-width: 0;
+  overflow: auto;
+}
+.page {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 28px 36px 72px;
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  box-shadow: 0 1px 0 var(--m-line);
+}
+.eyebrow {
+  margin: 0 0 2px;
+  color: var(--m-accent-text);
+  font-size: var(--m-fs-small);
+  font-weight: var(--weight-semibold);
+}
+.display {
+  margin: 0;
+  font-size: var(--m-fs-display);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+.display:focus {
+  outline: none;
+}
+.meta {
+  margin: 6px 0 0;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-meta);
+}
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Picker: another application asked for a photo. */
+.picker-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 18px;
+  padding: 12px 14px 12px 16px;
+  border-radius: var(--m-r-group);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.picker-band p {
+  flex: 1;
+  margin: 0;
+  color: var(--m-text);
+}
+
+/* Library grid: square tiles; the picture itself is the interface. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--m-raised);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+  cursor: pointer;
+}
+.tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--m-page) var(--m-ease);
+}
+.tile:hover img {
+  transform: scale(1.025);
+}
+.tile .broken {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+}
+.tile .caption {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 18px 10px 8px;
+  background: linear-gradient(transparent, rgba(12, 10, 9, 0.85));
+  color: var(--m-text);
+  font-size: var(--m-fs-small);
+  text-align: left;
+  opacity: 0;
+  transition: opacity var(--m-fast) var(--m-ease);
+}
+.tile:hover .caption,
+.tile:focus-visible .caption {
+  opacity: 1;
+}
+.more {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* Upload: a drop zone and a quiet progress list. */
+.drop {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 26px 16px;
+  border-radius: var(--m-r-group);
+  background: color-mix(in srgb, var(--m-well) 70%, transparent);
+  box-shadow: inset 0 0 0 1px var(--m-line-strong);
+  color: var(--m-text-2);
+  text-align: center;
+  cursor: pointer;
+}
+.drop strong {
+  color: var(--m-text);
+}
+.drop small {
+  color: var(--m-text-3);
+}
+.drop.is-over {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.uploads {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+.uploads li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--m-raised);
+  font-size: var(--m-fs-small);
+}
+.uploads .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uploads .state {
+  color: var(--m-text-3);
+}
+.uploads .state.bad {
+  color: var(--danger);
+}
+.uploads .bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--m-line);
+}
+.uploads .bar span {
+  display: block;
+  width: var(--p, 0%);
+  height: 100%;
+  background: var(--accent);
+}
+.empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 72px 16px;
+  color: var(--m-text-2);
+  text-align: center;
+}
+.empty h3 {
+  margin: 0;
+  color: var(--m-text);
+  font-size: var(--m-fs-section);
+}
+.empty p {
+  max-width: 46ch;
+  margin: 0;
+}
+
+/* One photo: the picture, its facts, and what can be done with it. */
+.photo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 28px;
+  align-items: start;
+}
+.stage {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  padding: 14px;
+  border-radius: var(--m-r-surface);
+  background: #0e0c0b;
+  box-shadow: inset 0 0 0 1px var(--m-line);
+}
+.stage img {
+  max-width: 100%;
+  max-height: calc(100vh - 230px);
+  border-radius: 6px;
+  object-fit: contain;
+}
+.facts {
+  display: grid;
+  gap: 14px;
+}
+.facts dl {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: var(--m-fs-meta);
+}
+.facts dt {
+  color: var(--m-text-3);
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.section-label {
+  margin: 6px 0 0;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.usage {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--m-text-2);
+  font-size: var(--m-fs-meta);
+}
+.notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  color: var(--m-text);
+  font-size: var(--m-fs-small);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings {
+  display: grid;
+  gap: 18px;
+  max-width: 520px;
+}
+.settings .ae-input {
+  max-width: 160px;
+}
+
+@media (max-width: 1099px) {
+  .photo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stage img {
+    max-height: 62vh;
+  }
+}
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: auto;
+    min-height: 100vh;
+  }
+  .rail {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 8px;
+    overflow-x: auto;
+  }
+  .brand {
+    padding: 0 8px 0 4px;
+  }
+  .brand-name {
+    display: none;
+  }
+  .nav-item {
+    width: auto;
+    flex: none;
+  }
+  .sheet {
+    overflow: visible;
+  }
+  .page {
+    padding: 18px 14px 56px;
+  }
+  .display {
+    font-size: var(--m-fs-title);
+  }
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 6px;
+  }
+  .facts dl {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile img,
+  .tile .caption {
+    transition: none;
+  }
+}
+[data-heading]:focus,
+[data-heading]:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.rail nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+@media (max-width: 760px) {
+  .rail nav {
+    flex-direction: row;
+    gap: 4px;
+  }
+}

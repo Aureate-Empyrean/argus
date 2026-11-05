@@ -1,0 +1,63 @@
+{
+  "protocol": 1,
+  "id": "argus",
+  "name": "Argus",
+  "description": "Your own photographs, kept privately: upload, browse and keep originals intact, and share chosen pictures with other applications you allow.",
+  "version": "0.1.0",
+  "publisher": {
+    "name": "Aureate Empyrean",
+    "originalAuthors": [
+      "Aureate Empyrean contributors"
+    ]
+  },
+  "repository": "https://github.com/Aureate-Empyrean/argus",
+  "license": "AGPL-3.0-or-later",
+  "nexus": ">=0.1.8,<0.2.0",
+  "container": {
+    "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "port": 18333
+  },
+  "capabilities": [
+    "ui.application",
+    "storage.data",
+    "references.read",
+    "references.resolve"
+  ],
+  "routes": {
+    "ui": "/",
+    "api": "/api",
+    "health": "/health"
+  },
+  "icon": "/icon.svg",
+  "events": {
+    "produces": [],
+    "consumes": []
+  },
+  "resources": [
+    {
+      "type": "photo",
+      "resolvable": true
+    }
+  ],
+  "references": {
+    "version": 2,
+    "read": [],
+    "resolve": [
+      {
+        "module": "meridian",
+        "type": "person"
+      }
+    ]
+  },
+  "projections": {
+    "version": 1,
+    "provides": [
+      "photo-library",
+      "photo-renditions"
+    ],
+    "read": []
+  },
+  "backup": {
+    "version": 1
+  }
+}
