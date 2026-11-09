@@ -3,7 +3,7 @@
   "id": "argus",
   "name": "Argus",
   "description": "Your own photographs, kept privately: upload, browse and keep originals intact, and share chosen pictures with other applications you allow.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": {
     "name": "Aureate Empyrean",
     "originalAuthors": [
@@ -12,7 +12,7 @@
   },
   "repository": "https://github.com/Aureate-Empyrean/argus",
   "license": "AGPL-3.0-or-later",
-  "nexus": ">=0.1.8,<0.2.0",
+  "nexus": ">=0.1.14,<0.2.0",
   "container": {
     "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "port": 18333
@@ -21,14 +21,16 @@
     "ui.application",
     "storage.data",
     "references.read",
-    "references.resolve"
+    "references.resolve",
+    "references.create",
+    "projections.read"
   ],
   "routes": {
     "ui": "/",
     "api": "/api",
     "health": "/health"
   },
-  "icon": "/icon.svg",
+  "icon": "/icon-emerald.svg",
   "events": {
     "produces": [],
     "consumes": []
@@ -46,8 +48,17 @@
       {
         "module": "meridian",
         "type": "person"
+      },
+      {
+        "module": "meridian",
+        "type": "organization"
+      },
+      {
+        "module": "meridian",
+        "type": "group"
       }
-    ]
+    ],
+    "enumerate": true
   },
   "projections": {
     "version": 1,
@@ -55,9 +66,18 @@
       "photo-library",
       "photo-renditions"
     ],
-    "read": []
+    "read": [
+      {
+        "module": "meridian",
+        "projection": "people-directory"
+      }
+    ]
   },
   "backup": {
-    "version": 1
+    "version": 1,
+    "objects": true
+  },
+  "runtime": {
+    "memory_mb": 768
   }
 }

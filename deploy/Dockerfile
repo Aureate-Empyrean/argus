@@ -5,6 +5,7 @@ COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock
 COPY backend ./backend
 COPY frontend ./frontend
+COPY models ./models
 COPY LICENSE ./
 RUN mkdir /data && chown 10001:10001 /data
 USER 10001:10001

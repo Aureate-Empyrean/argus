@@ -1,1 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#1b1714"/><circle cx="32" cy="32" r="15" fill="none" stroke="#c48663" stroke-width="3"/><circle cx="32" cy="32" r="6" fill="#e3b497"/><path d="M8 32c7-11 15-17 24-17s17 6 24 17c-7 11-15 17-24 17S15 43 8 32z" fill="none" stroke="#a59b93" stroke-width="2"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <title>Argus</title>
+  <defs>
+    <!-- CSS 145deg: direction (sin(145deg), -cos(145deg)) on a square tile. -->
+    <linearGradient id="emerald" gradientUnits="userSpaceOnUse" x1="4.8279" y1="-3.3805" x2="43.1721" y2="51.3805">
+      <stop offset="0" stop-color="#B0E4A0"/>
+      <stop offset=".48" stop-color="#4DAD72"/>
+      <stop offset="1" stop-color="#246747"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" fill="url(#emerald)"/>
+  <g transform="translate(6 6) scale(1.8)" fill="none" stroke="#101B13" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2.5 10C4.3 6.6 7 4.8 10 4.8s5.7 1.8 7.5 5.2c-1.8 3.4-4.5 5.2-7.5 5.2S4.3 13.4 2.5 10z"/>
+    <circle cx="10" cy="10" r="2.4"/>
+  </g>
+</svg>

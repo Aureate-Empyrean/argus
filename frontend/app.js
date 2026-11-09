@@ -8,6 +8,9 @@ const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// Filled by the server from frontend/icon.svg; the header and manifest share one asset.
+const ARGUS_ICON = "/*ARGUS_ICON*/";
+
 const ICONS = {
   photos: '<rect x="3" y="4.5" width="14" height="11" rx="2"/><circle cx="7.5" cy="8.5" r="1.4"/><path d="m3.5 14 4-3.6 3 2.6 2.2-1.8L16.5 14"/>',
   trash: '<path d="M4.5 6h11M8 6V4.5h4V6M6 6l.7 10h6.6L14 6"/>',
@@ -17,7 +20,9 @@ const ICONS = {
   download: '<path d="M10 4v9M6.5 9.7 10 13.2l3.5-3.5"/><path d="M4 14.5v.7c0 .8.7 1.5 1.5 1.5h9c.8 0 1.5-.7 1.5-1.5v-.7"/>',
   restore: '<path d="M4.5 9.5a5.5 5.5 0 1 1 1.6 4"/><path d="M4 5.5v4h4"/>',
   check: '<path d="m4.8 10.4 3.3 3.3 7.1-7.4"/>',
-  eye: '<path d="M2.5 10C4.3 6.6 7 4.8 10 4.8s5.7 1.8 7.5 5.2c-1.8 3.4-4.5 5.2-7.5 5.2S4.3 13.4 2.5 10z"/><circle cx="10" cy="10" r="2.4"/>',
+  plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  people: '<circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16c.5-3 2.5-4.5 5-4.5s4.5 1.500 5 4.500"/><path d="M13 4.500a2.800 2.800 0 0 1 0 5M14.500 11.800c1.600.6 2.700 2 3 4.200"/>',
+  folder: '<path d="M3 5.500c0-.8.7-1.500 1.500-1.500h3.200l1.800 2h6c.8 0 1.500.7 1.500 1.500v7c0 .8-.7 1.500-1.500 1.500h-11c-.8 0-1.500-.7-1.500-1.500z"/>',
 };
 const icon = (n) => `<svg class="i" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ""}</svg>`;
 
@@ -81,6 +86,8 @@ function routeFrom(path) {
   }
   const photo = p.match(/^\/photos\/([0-9a-f-]{36})$/);
   if (photo) return { view: "photo", id: photo[1] };
+  if (p === "/people") return { view: "people" };
+  if (p === "/import") return { view: "import" };
   if (p === "/trash") return { view: "trash" };
   if (p === "/settings") return { view: "settings" };
   return { view: "library" };
@@ -92,7 +99,7 @@ function go(view, id = null) {
 
 function shell() {
   $("#app").innerHTML = `<aside class="rail" aria-label="Argus">
-      <div class="brand"><span class="brand-mark">${icon("eye")}</span><span class="brand-name">Argus</span></div>
+      <div class="brand"><span class="brand-mark"><img src="${ARGUS_ICON}" alt="" aria-hidden="true" width="32" height="32"></span><span class="brand-name">Argus</span></div>
       <nav id="nav" aria-label="Sections"></nav>
     </aside>
     <main class="sheet" id="sheet"></main>`;
@@ -100,7 +107,7 @@ function shell() {
 function nav() {
   const r = state.route.view;
   const item = (view, ic, text, count) => `<button class="nav-item" data-go="${view}" ${r === view || (view === "library" && r === "photo") ? 'aria-current="page"' : ""}>${icon(ic)}<span>${text}</span>${count ? `<span class="count">${count}</span>` : ""}</button>`;
-  $("#nav").innerHTML = item("library", "photos", "Photos", state.counts.active) + item("trash", "trash", "Trash", state.counts.trashed) + item("settings", "settings", "Settings");
+  $("#nav").innerHTML = item("library", "photos", "Photos", state.counts.active) + item("people", "people", "People") + item("import", "folder", "Import") + item("trash", "trash", "Trash", state.counts.trashed) + item("settings", "settings", "Settings");
 }
 async function refreshState() {
   const s = await api("/state");
@@ -116,6 +123,9 @@ async function render() {
     if (state.route.view === "photo") await viewPhoto(sheet, state.route.id);
     else if (state.route.view === "trash") await viewGrid(sheet, "trashed");
     else if (state.route.view === "settings") viewSettings(sheet);
+    else if (state.route.view === "people") await viewPeople(sheet);
+    else if (state.route.view === "cluster") await viewCluster(sheet, state.route.id);
+    else if (state.route.view === "import") await viewImport(sheet);
     else await viewGrid(sheet, "active");
   } catch (error) {
     sheet.innerHTML = `<div class="page"><div class="empty"><h3>This could not be loaded</h3><p>${esc(error.message)}</p><button class="ae-btn" data-go="library">Back to Photos</button></div></div>`;
@@ -203,7 +213,7 @@ async function queue(files) {
     if (state.pick && done.length === 1 && last) go("photo", last.id);
   } else nav();
 }
-async function uploadOne(u) {
+async function uploadOne(u, { quiet = false } = {}) {
   u.status = "Uploading";
   renderUploads();
   const start = await api("/uploads", "POST", { filename: u.name, size: u.file.size });
@@ -216,9 +226,9 @@ async function uploadOne(u) {
   }
   u.status = "Checking";
   renderUploads();
-  const result = await api(`/uploads/${start.id}/finish`, "POST");
+  const result = await api(`/uploads/${start.id}/finish${u.source ? `?source=${encodeURIComponent(u.source)}` : ""}`, "POST");
   u.status = result.duplicate ? "Already in your library" : "Added";
-  if (result.duplicate) toast(`${u.name} is already in your library`);
+  if (result.duplicate && !quiet) toast(`${u.name} is already in your library`);
   return result.photo;
 }
 
@@ -237,7 +247,8 @@ async function viewPhoto(sheet, id) {
       <section class="facts" aria-label="About this photo">
         <div class="ae-field"><label class="ae-label" for="title">Title</label><input class="ae-input" id="title" maxlength="200" value="${esc(p.title)}" placeholder="Add a title" ${trashed ? "disabled" : ""}></div>
         <dl>${fact("Taken", esc(when(p.taken_at)))}${fact("Camera", esc(p.camera))}${fact("Size", `${esc(p.width)} × ${esc(p.height)} px`)}${fact("File", `${esc(p.filename || "—")} · ${esc(p.format)} · ${bytes(p.bytes)}`)}${fact("Uploaded", esc(when(p.created_at)))}${fact("Location", p.has_location ? "Recorded in the original file; never shown to other applications" : "")}${p.animated ? fact("Animation", "Still images are made from the first frame") : ""}</dl>
-        <p class="section-label">Used by</p><ul class="usage" id="usage"><li>Checking…</li></ul>
+        <p class="section-label">People in this photo</p><div id="face-panel"></div>
+        <p class="section-label">Linked from other modules</p><ul class="usage" id="usage"><li>Checking…</li></ul>
         <div class="actions">
           ${p.original_available ? `<button class="ae-btn" data-act="download" data-id="${esc(p.id)}">${icon("download")}<span>Download original</span></button>` : ""}
           ${trashed ? `<button class="ae-btn" data-act="restore" data-id="${esc(p.id)}">${icon("restore")}<span>Restore</span></button><button class="ae-btn ae-btn--danger" data-act="purge" data-id="${esc(p.id)}">${icon("trash")}<span>Delete for good</span></button>` : `<button class="ae-btn ae-btn--quiet" data-act="trash" data-id="${esc(p.id)}">${icon("trash")}<span>Move to Trash</span></button>`}
@@ -250,6 +261,7 @@ async function viewPhoto(sheet, id) {
     toast("Title saved", "good");
   };
   usageInto(id);
+  loadPhotoFaces(id).catch(() => {});
 }
 async function usageInto(id) {
   const box = $("#usage");
@@ -261,7 +273,7 @@ async function usageInto(id) {
     box.innerHTML = !u.known
       ? "<li>Could not be checked right now.</li>"
       : u.items.length
-        ? u.items.map((x) => `<li>${esc(appName(x.module))}${x.label ? ` · ${esc(x.label)}` : ""}${x.relation.endsWith("representative-image") ? " (profile picture)" : ""}</li>`).join("")
+        ? u.items.map((x) => `<li>${esc(appName(x.module))} · ${esc(x.label || "Something linked here")}${x.relation.endsWith("representative-image") ? " (profile picture)" : ""}${x.availability === "deleted" ? " · deleted there" : x.availability && x.availability !== "available" ? " · not available right now" : ""}</li>`).join("")
         : "<li>No other application uses this photo.</li>";
   } catch {
     if (box.isConnected) box.innerHTML = "<li>Could not be checked right now.</li>";
@@ -294,26 +306,42 @@ function viewSettings(sheet) {
     <form class="settings" id="settings">
       <div class="ae-field"><label class="ae-label" for="max-mb">Largest file (MB)</label><input class="ae-input" id="max-mb" type="number" min="${l.max_upload_mb[0]}" max="${l.max_upload_mb[1]}" value="${s.max_upload_mb}"><p class="ae-hint">Between ${l.max_upload_mb[0]} and ${l.max_upload_mb[1]} MB.</p></div>
       <div class="ae-field"><label class="ae-label" for="max-mp">Largest picture (megapixels)</label><input class="ae-input" id="max-mp" type="number" min="${l.max_megapixels[0]}" max="${l.max_megapixels[1]}" value="${s.max_megapixels}"><p class="ae-hint">At most ${l.max_megapixels[1]}: Argus decodes pictures within the memory Nexus gives each module.</p></div>
-      <div class="actions"><button class="ae-btn ae-btn--primary" type="submit">Save</button></div>
+      <div class="actions"><button class="ae-btn ae-btn--primary" type="button" id="save-settings">Save</button></div>
     </form></div>`;
-  $("#settings").onsubmit = async (e) => {
-    e.preventDefault();
+  // The Nexus sandbox has no allow-forms, so a <form> is never submitted: the button and
+  // Enter call the handler directly.
+  const form = $("#settings");
+  const save = async () => {
+    const button = $("#save-settings");
+    if (button.disabled || !form.reportValidity()) return;
+    button.disabled = true;
     try {
       state.settings = await api("/settings", "PUT", { max_upload_mb: +$("#max-mb").value, max_megapixels: +$("#max-mp").value });
       toast("Settings saved", "good");
     } catch (error) {
       toast(error.message, "danger");
+    } finally {
+      button.disabled = false;
+    }
+  };
+  $("#save-settings").onclick = save;
+  form.onsubmit = (e) => e.preventDefault();
+  form.onkeydown = (e) => {
+    if (e.key === "Enter" && e.target.tagName === "INPUT") {
+      e.preventDefault();
+      save();
     }
   };
 }
 
 /* ── Actions ── */
 document.addEventListener("click", async (event) => {
-  const el = event.target.closest("[data-go], [data-act], [data-photo]");
+  const el = event.target.closest("[data-go], [data-act], [data-photo], [data-cluster]");
   if (!el || el.disabled) return;
   try {
     if (el.dataset.go) return go(el.dataset.go);
-    if (el.dataset.photo) return go("photo", el.dataset.photo);
+    if (el.dataset.cluster) return go("cluster", el.dataset.cluster);
+    if (el.dataset.photo && !el.dataset.act) return go("photo", el.dataset.photo);
     const act = el.dataset.act;
     const id = el.dataset.id;
     if (act === "choose") return $("#file").click();
@@ -352,12 +380,308 @@ document.addEventListener("click", async (event) => {
       toast("Deleted for good");
       return go("trash");
     }
+    const handled = await peopleAction(act, el);
+    if (handled !== undefined) return handled;
     if (act === "use") return bridge("navigate", { module: state.pick.module, path: `${state.pick.back}/${id}` });
     if (act === "pick-cancel") return bridge("navigate", { module: state.pick.module, path: state.pick.back || "/" });
   } catch (error) {
     toast(error.message, "danger");
   }
 });
+
+/* ── Import (ADR 0027) ── */
+let importTimer = null;
+const IMAGE_FILE = /\.(jpe?g|png|webp|gif)$/i;
+const folderRun = { active: false, cancel: false, total: 0, done: 0, added: 0, duplicates: 0, failed: 0 };
+function jobRow(j) {
+  const running = ["scanning", "running", "cancelling"].includes(j.state);
+  const stateText = { scanning: "Looking through the folder…", running: "Importing", cancelling: "Stopping…", cancelled: "Cancelled", done: "Finished", failed: "Stopped by an error" }[j.state];
+  const pct = j.total ? Math.round((j.processed / j.total) * 100) : 0;
+  return `<li class="job"><div class="job-head"><strong>${esc(j.root || "Import folder")}</strong><span>${esc(stateText)}</span></div>
+    <span class="bar"><span style="--p:${pct}%"></span></span>
+    <p class="meta">${j.processed} of ${j.total} · ${j.imported} added · ${j.duplicates} already in your library · ${j.failed} could not be imported</p>
+    ${running ? `<button class="ae-btn ae-btn--sm" data-act="import-cancel" data-id="${esc(j.id)}">Cancel</button>` : j.failed ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="import-errors" data-id="${esc(j.id)}">See what failed</button><ul class="usage" id="errors-${esc(j.id)}"></ul>` : ""}</li>`;
+}
+async function viewImport(sheet) {
+  const browse = await api("/import/folders?path=" + encodeURIComponent(state.importPath || "")).catch(() => ({ path: "", folders: [], files: 0 }));
+  sheet.innerHTML = `<div class="page"><header class="head"><div><p class="eyebrow">Library</p><h2 class="display" data-heading tabindex="-1">Import</h2><p class="meta">Exact duplicates are found by their content. Your source files are never changed or deleted.</p></div></header>
+    <section class="panel-block"><h3>From this device</h3><p class="meta">Choose a folder. Each photo is uploaded in turn, so large batches are fine.</p>
+      <input type="file" id="folder" webkitdirectory multiple hidden><button class="ae-btn ae-btn--primary" data-act="import-local">${icon("folder")}<span>Choose a folder</span></button><div id="folder-run"></div></section>
+    <section class="panel-block"><h3>From the server</h3><p class="meta">Folders inside Argus's import folder${browse.path ? `: <code>${esc(browse.path)}</code>` : ""}.</p>
+      <ul class="folders">${browse.path ? `<li><button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="import-open" data-path="${esc(browse.path.split("/").slice(0, -1).join("/"))}">${icon("back")}<span>Up</span></button></li>` : ""}${browse.folders.map((x) => `<li><button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="import-open" data-path="${esc(x.path)}">${icon("folder")}<span>${esc(x.name)}</span></button></li>`).join("") || (browse.path ? "" : "<li class='meta'>No folders yet. Copy photos into the import folder on the server first.</li>")}</ul>
+      <button class="ae-btn" data-act="import-server" data-path="${esc(browse.path)}" ${browse.files || browse.folders.length ? "" : "disabled"}>Import this folder${browse.files ? ` (${browse.files} here, and any subfolders)` : ""}</button></section>
+    <section class="panel-block"><h3>Recent imports</h3><ul class="jobs" id="jobs"><li class="meta">Checking…</li></ul></section></div>`;
+  $("#folder").onchange = (e) => runFolder([...e.target.files]);
+  renderFolderRun();
+  pollJobs();
+}
+async function pollJobs() {
+  clearTimeout(importTimer);
+  if (state.route.view !== "import") return;
+  const { items } = await api("/import/jobs").catch(() => ({ items: [] }));
+  const box = $("#jobs");
+  if (!box) return;
+  box.innerHTML = items.length ? items.map(jobRow).join("") : '<li class="meta">No imports yet.</li>';
+  if (items.some((j) => ["scanning", "running", "cancelling"].includes(j.state))) importTimer = setTimeout(pollJobs, 1500);
+  else refreshState().then(nav).catch(() => {});
+}
+function renderFolderRun() {
+  const box = $("#folder-run");
+  if (!box || !folderRun.total) return;
+  const r = folderRun;
+  box.innerHTML = `<span class="bar"><span style="--p:${Math.round((r.done / r.total) * 100)}%"></span></span><p class="meta">${r.done} of ${r.total} · ${r.added} added · ${r.duplicates} already in your library · ${r.failed} could not be imported${r.cancel ? " · cancelled" : ""}</p>${r.active ? '<button class="ae-btn ae-btn--sm" data-act="import-local-cancel">Cancel</button>' : ""}`;
+}
+async function runFolder(files) {
+  const images = files.filter((x) => IMAGE_FILE.test(x.name));
+  Object.assign(folderRun, { active: true, cancel: false, total: images.length, done: 0, added: 0, duplicates: 0, failed: 0 });
+  renderFolderRun();
+  for (const file of images) {
+    if (folderRun.cancel) break;
+    try {
+      const u = { file, name: file.name, status: "", progress: 0, source: file.webkitRelativePath };
+      const before = await uploadOne(u, { quiet: true });
+      folderRun[u.status === "Added" ? "added" : "duplicates"]++;
+      void before;
+    } catch {
+      folderRun.failed++;
+    }
+    folderRun.done++;
+    renderFolderRun();
+  }
+  folderRun.active = false;
+  renderFolderRun();
+  await refreshState().catch(() => {});
+  nav();
+}
+
+/* ── People: face recognition (ADR 0028) ── */
+const CONF = { high: "High confidence", medium: "Medium confidence", low: "Low confidence" };
+const STATUS_TEXT = { auto: "Automatic suggestion", confirmed: "Confirmed by you", unknown: "Marked unknown", excluded: "Excluded from recognition" };
+function faceCaption(f) {
+  if (f.status === "confirmed") return `${f.person_label || "Confirmed"} · confirmed`;
+  if (f.status === "unknown") return "Unknown";
+  if (f.status === "excluded") return "Excluded";
+  if (f.suggested) return `Maybe ${f.suggested_label || "someone in Meridian"}`;
+  return "Not named";
+}
+async function viewPeople(sheet) {
+  const status = await api("/faces/status");
+  const head = `<header class="head"><div><p class="eyebrow">Library</p><h2 class="display" data-heading tabindex="-1">People</h2><p class="meta">${status.enabled ? `${status.scanned} of ${status.photos} photos scanned · ${status.faces} faces · ${status.confirmed} confirmed` : "Face recognition is off"}</p></div>
+    ${status.enabled ? '<div class="tools"><button class="ae-btn" data-act="faces-off">Turn off</button><button class="ae-btn ae-btn--danger" data-act="faces-delete">Delete all recognition data</button></div>' : ""}</header>`;
+  if (!status.enabled) {
+    sheet.innerHTML = `<div class="page">${head}<div class="empty"><h3>Find the people in your photos</h3><p>Argus can detect faces, group the ones that look alike and let you name them from Meridian. It runs entirely on this server: photos and face data are never sent anywhere, and nothing is added to Meridian.</p>${status.supported ? '<button class="ae-btn ae-btn--primary" data-act="faces-on">Turn on face recognition</button>' : `<p class="notice">Argus needs more memory than Nexus has granted it (${status.memory_limit_mb} MB). Update Nexus and Argus.</p>`}</div></div>`;
+    return;
+  }
+  const { items } = await api("/faces/clusters");
+  sheet.innerHTML = `<div class="page">${head}${items.length ? `<ul class="clusters">${items.map((c) => `<li><button class="cluster" data-cluster="${esc(c.id)}"><span class="cluster-faces">${c.faces.map((f) => (f.thumb ? `<img src="${f.thumb}" alt="">` : "")).join("")}</span><strong>${esc(c.person_label || "Not named yet")}</strong><span class="meta">${c.count === 1 ? "1 photo" : `${c.count} photos`}</span></button></li>`).join("")}</ul>` : `<div class="empty"><h3>No faces found yet</h3><p>Scanning continues in the background.</p></div>`}</div>`;
+}
+function personPicker(id) {
+  return `<div class="person-pick"><input class="ae-input" id="pick-${id}" data-person-search="${id}" type="search" placeholder="Search people in Meridian" aria-label="Search people in Meridian" autocomplete="off" maxlength="100"><div class="person-results" id="results-${id}"></div></div>`;
+}
+let searchTimer = null;
+document.addEventListener("input", (event) => {
+  const id = event.target.dataset?.personSearch;
+  if (!id) return;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const box = $(`#results-${CSS.escape(id)}`);
+    const found = await api("/people?q=" + encodeURIComponent(event.target.value)).catch(() => ({ availability: "error", items: [] }));
+    if (!box) return;
+    box.innerHTML = found.availability !== "available" ? '<p class="meta">Meridian cannot be reached right now.</p>' : found.items.map((p) => `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="person-pick" data-target="${esc(id)}" data-resource="${esc(p.resource)}" data-label="${esc(p.label)}">${esc(p.label)}</button>`).join("") || '<p class="meta">No one in Meridian matches.</p>';
+  }, 180);
+});
+async function viewCluster(sheet, id) {
+  const c = await api(`/faces/clusters/${id}`);
+  const { items } = await api("/faces/clusters");
+  const others = items.filter((x) => x.id !== id);
+  sheet.innerHTML = `<div class="page"><header class="head"><div><p class="eyebrow"><button class="ae-btn ae-btn--quiet ae-btn--sm" data-go="people">${icon("back")}<span>People</span></button></p><h2 class="display" data-heading tabindex="-1">${esc(c.person_label || "Not named yet")}</h2><p class="meta">${c.faces.length} faces. Naming this group confirms only the confident matches; the others stay suggestions for you to check.</p></div>
+    ${c.person ? '<div class="tools"><button class="ae-btn" data-act="cluster-unassign">Remove this name</button></div>' : ""}</header>
+    ${c.person ? "" : `<section class="panel-block"><h3>Who is this?</h3>${personPicker("cluster")}</section>`}
+    ${others.length ? `<section class="panel-block"><h3>Same person as another group?</h3><select class="ae-select" id="merge-into" aria-label="Merge into"><option value="">Choose a group</option>${others.map((o) => `<option value="${esc(o.id)}">${esc(o.person_label || `Not named (${o.count})`)}</option>`).join("")}</select> <button class="ae-btn ae-btn--sm" data-act="cluster-merge">Merge</button></section>` : ""}
+    <ul class="face-grid">${c.faces.map(faceCard).join("")}</ul></div>`;
+  state.clusterId = id;
+}
+function faceCard(f) {
+  return `<li class="face-card" data-face="${esc(f.id)}">${f.thumb ? `<img src="${f.thumb}" alt="">` : ""}<div><strong>${esc(faceCaption(f))}</strong><span class="meta">${esc(STATUS_TEXT[f.status])}${f.status === "auto" && f.confidence ? ` · ${CONF[f.confidence]}` : ""}</span></div>
+    <div class="actions">${f.status === "auto" && (f.suggested || state.route.view === "cluster") ? `<button class="ae-btn ae-btn--sm" data-act="face-confirm" data-id="${esc(f.id)}">${icon("check")}<span>Yes</span></button>` : ""}<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="face-open" data-photo="${esc(f.photo_id)}">Open photo</button></div></li>`;
+}
+/* One photo: boxes over the picture, and a card per face. */
+async function loadPhotoFaces(id) {
+  const panel = $("#face-panel");
+  const status = await api("/faces/status").catch(() => null);
+  if (!panel || !status) return;
+  const { items } = await api(`/photos/${id}/faces`);
+  const stage = $(".stage");
+  const img = $(".stage img");
+  let layer = $("#face-layer");
+  if (img && !layer) {
+    layer = document.createElement("div");
+    layer.id = "face-layer";
+    stage.classList.add("has-faces");
+    stage.append(layer);
+  }
+  const place = () => {
+    if (!layer || !img) return;
+    const r = img.getBoundingClientRect();
+    const s = stage.getBoundingClientRect();
+    Object.assign(layer.style, { left: `${r.left - s.left}px`, top: `${r.top - s.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+  };
+  if (img) {
+    if (img.complete) place();
+    img.onload = place;
+    window.addEventListener("resize", place);
+  }
+  if (layer) layer.innerHTML = items.map((f) => `<button class="face-box is-${f.status}" data-act="face-select" data-id="${esc(f.id)}" style="left:${f.box.x * 100}%;top:${f.box.y * 100}%;width:${f.box.w * 100}%;height:${f.box.h * 100}%" aria-label="${esc(faceCaption(f))}"><span>${esc(faceCaption(f))}</span></button>`).join("");
+  state.photoFaces = { id, items };
+  const faceHtml = items.length ? items.map(photoFaceRow).join("") : `<p class="meta">${status.enabled ? "No faces marked in this photo." : "Face recognition is off, but you can still mark a face by hand."}</p>`;
+  panel.innerHTML = `<div class="face-rows">${faceHtml}</div><button class="ae-btn ae-btn--sm" data-act="face-mark" data-id="${esc(id)}">${icon("plus")}<span>Mark a face</span></button>`;
+}
+function photoFaceRow(f) {
+  const decided = f.status !== "auto";
+  const tools = [
+    f.status === "auto" && f.suggested ? `<button class="ae-btn ae-btn--sm" data-act="face-confirm" data-id="${esc(f.id)}">${icon("check")}<span>Confirm</span></button>` : "",
+    `<button class="ae-btn ae-btn--sm" data-act="face-change" data-id="${esc(f.id)}">${f.status === "confirmed" ? "Change" : "Name"}</button>`,
+    f.status !== "unknown" ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="face-state" data-state="unknown" data-id="${esc(f.id)}">Unknown</button>` : "",
+    f.status !== "excluded" ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="face-state" data-state="excluded" data-id="${esc(f.id)}">Exclude</button>` : "",
+    decided ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="face-reset" data-id="${esc(f.id)}">Undo</button>` : "",
+    f.origin === "manual" ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="face-remove" data-id="${esc(f.id)}">Remove</button>` : "",
+  ].join("");
+  return `<div class="face-row" id="face-${esc(f.id)}">${f.thumb ? `<img src="${f.thumb}" alt="">` : ""}<div class="grow"><strong>${esc(faceCaption(f))}</strong><span class="meta">${esc(STATUS_TEXT[f.status])}${f.origin === "manual" ? " · marked by hand" : ""}${f.status === "auto" && f.confidence ? ` · ${CONF[f.confidence]}` : ""}</span><div class="actions">${tools}</div><div id="picker-${esc(f.id)}"></div></div></div>`;
+}
+function startMarking(photoId) {
+  const layer = $("#face-layer");
+  if (!layer) return toast("The picture is not available to mark.", "danger");
+  layer.classList.add("is-marking");
+  toast("Drag a box around the face.");
+  let start = null;
+  let box = null;
+  const point = (e) => {
+    const r = layer.getBoundingClientRect();
+    return [Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))];
+  };
+  layer.onpointerdown = (e) => {
+    if (e.target.closest(".face-box")) return;
+    e.preventDefault();
+    layer.setPointerCapture(e.pointerId);
+    start = point(e);
+    box = document.createElement("div");
+    box.className = "face-draft";
+    layer.append(box);
+  };
+  layer.onpointermove = (e) => {
+    if (!start) return;
+    const [x, y] = point(e);
+    Object.assign(box.style, { left: `${Math.min(x, start[0]) * 100}%`, top: `${Math.min(y, start[1]) * 100}%`, width: `${Math.abs(x - start[0]) * 100}%`, height: `${Math.abs(y - start[1]) * 100}%` });
+  };
+  layer.onpointerup = async (e) => {
+    if (!start) return;
+    const [x, y] = point(e);
+    const area = { x: Math.min(x, start[0]), y: Math.min(y, start[1]), w: Math.abs(x - start[0]), h: Math.abs(y - start[1]) };
+    start = null;
+    layer.classList.remove("is-marking");
+    layer.onpointerdown = layer.onpointermove = layer.onpointerup = null;
+    box.remove();
+    if (area.w < 0.01 || area.h < 0.01) return toast("That box is too small.", "danger");
+    try {
+      const made = await api(`/photos/${photoId}/faces`, "POST", area);
+      await loadPhotoFaces(photoId);
+      openFacePicker(made.id);
+    } catch (error) {
+      toast(error.message, "danger");
+    }
+  };
+}
+function openFacePicker(id) {
+  const holder = $(`#picker-${CSS.escape(id)}`);
+  if (!holder) return;
+  holder.innerHTML = personPicker(id);
+  $("input", holder).focus();
+}
+async function afterFaceChange() {
+  if (state.route.view === "photo") return loadPhotoFaces(state.route.id);
+  return render();
+}
+async function peopleAction(act, el) {
+  const id = el.dataset.id;
+  if (act === "import-open") {
+    state.importPath = el.dataset.path;
+    return render();
+  }
+  if (act === "import-server") {
+    await api("/import/jobs", "POST", { path: el.dataset.path || "" });
+    toast("Import started");
+    return pollJobs();
+  }
+  if (act === "import-cancel") {
+    await api(`/import/jobs/${id}/cancel`, "POST");
+    return pollJobs();
+  }
+  if (act === "import-errors") {
+    const { items } = await api(`/import/jobs/${id}/errors`);
+    $(`#errors-${CSS.escape(id)}`).innerHTML = items.map((x) => `<li>${esc(x.path)}: ${esc(x.error)}</li>`).join("");
+    return true;
+  }
+  if (act === "import-local") return $("#folder").click();
+  if (act === "import-local-cancel") {
+    folderRun.cancel = true;
+    return renderFolderRun();
+  }
+  if (act === "faces-on" || act === "faces-off") {
+    await api("/faces/settings", "PUT", { enabled: act === "faces-on" });
+    return render();
+  }
+  if (act === "faces-delete") {
+    if (!(await confirmDialog("Delete all recognition data?", "<p>Every detected face, grouping and name you assigned is removed, and recognition is turned off. Your photographs are not affected.</p>", "Delete recognition data"))) return true;
+    await api("/faces/data?confirm=true", "DELETE");
+    toast("Recognition data deleted");
+    return render();
+  }
+  if (act === "person-pick") {
+    const body = { resource: el.dataset.resource, label: el.dataset.label };
+    if (el.dataset.target === "cluster") await api(`/faces/clusters/${state.clusterId}/assign`, "POST", body);
+    else await api(`/faces/${el.dataset.target}/assign`, "POST", body);
+    toast("Saved", "good");
+    return afterFaceChange();
+  }
+  if (act === "cluster-unassign") {
+    await api(`/faces/clusters/${state.clusterId}/unassign`, "POST");
+    return render();
+  }
+  if (act === "cluster-merge") {
+    const into = $("#merge-into").value;
+    if (!into) return true;
+    await api(`/faces/clusters/${state.clusterId}/merge`, "POST", { into });
+    state.route = { view: "cluster", id: into };
+    return render();
+  }
+  if (act === "face-confirm") {
+    await api(`/faces/${id}/confirm`, "POST").catch(async (error) => {
+      if (state.route.view !== "cluster" || !/no suggestion/.test(error.message)) throw error;
+      toast("Name this group first.");
+    });
+    return afterFaceChange();
+  }
+  if (act === "face-open") return go("photo", el.dataset.photo);
+  if (act === "face-select") {
+    $(`#face-${CSS.escape(id)}`)?.scrollIntoView({ block: "nearest" });
+    return openFacePicker(id);
+  }
+  if (act === "face-change") return openFacePicker(id);
+  if (act === "face-state") {
+    await api(`/faces/${id}/state`, "POST", { state: el.dataset.state });
+    return afterFaceChange();
+  }
+  if (act === "face-reset") {
+    await api(`/faces/${id}/reset`, "POST");
+    return afterFaceChange();
+  }
+  if (act === "face-remove") {
+    await api(`/faces/${id}`, "DELETE");
+    return afterFaceChange();
+  }
+  if (act === "face-mark") return startMarking(id);
+  return undefined;
+}
 
 async function start() {
   try {

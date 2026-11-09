@@ -1,40 +1,41 @@
 /* Argus: the user's own photographs. Loaded after aureate-tokens.css and aureate-foundation.css,
-   whose primitives it reuses. Tokens follow Meridian's warm-graphite and copper layer so the two
-   modules read as one ecosystem. */
+   whose primitives it reuses. Emerald accents and cool graphite surfaces give Argus its own
+   identity while preserving the shared AE composition and materials. */
 :root {
-  /* Accent family: copper */
-  --accent: #c48663;
-  --accent-hi: #e3b497;
-  --accent-deep: #8c5638;
-  --accent-2: #5d7389;
-  --accent-hover: rgba(196, 134, 99, 0.09);
-  --accent-soft: rgba(196, 134, 99, 0.14);
-  --accent-sel: rgba(196, 134, 99, 0.2);
-  --accent-line: rgba(196, 134, 99, 0.45);
+  /* Accent family: Emerald (approved 2026-11-07) */
+  --accent: #4dad72;
+  --accent-hi: #b0e4a0;
+  --accent-deep: #246747;
+  --accent-2: #246747;
+  --accent-hover: rgba(77, 173, 114, 0.09);
+  --accent-soft: rgba(77, 173, 114, 0.14);
+  --accent-sel: rgba(77, 173, 114, 0.2);
+  --accent-line: rgba(77, 173, 114, 0.45);
   --focus: var(--accent-hi);
+  --accent-ink: #101b13;
 
-  /* Surfaces, darkest to lightest. Each step has one job (docs/DESIGN.md):
+  /* Surfaces, darkest to lightest. Each step has one job (docs/ARGUS.md):
      canvas (behind everything) → well (recessed inputs) → sheet (the workspace) →
      band (a screen's identity header) → raised (lists, tiles, the context column) →
      overlay (menus, dialogs, search results). */
-  --m-canvas: #0c0a09;
-  --m-well: #110f0d;
-  --m-sheet: #151210;
-  --m-band: #1a1714;
-  --m-raised: #1e1a17;
-  --m-raised-hover: #231f1b;
-  --m-overlay: #27221e;
-  --m-hover: rgba(255, 236, 222, 0.045);
-  --m-press: rgba(255, 236, 222, 0.075);
-  --m-line: rgba(255, 236, 222, 0.075);
-  --m-line-strong: rgba(255, 236, 222, 0.13);
+  --m-canvas: #090c0b;
+  --m-well: #0d110f;
+  --m-sheet: #101512;
+  --m-band: #141a16;
+  --m-raised: #171e1a;
+  --m-raised-hover: #1b231f;
+  --m-overlay: #1e2722;
+  --m-hover: rgba(236, 255, 242, 0.045);
+  --m-press: rgba(236, 255, 242, 0.075);
+  --m-line: rgba(236, 255, 242, 0.075);
+  --m-line-strong: rgba(236, 255, 242, 0.13);
 
   /* Text: every level stays readable on the sheet (contrast ≥ 5.5:1 for --m-text-3) */
-  --m-text: #f2ede9;
-  --m-text-2: #cbc3bc;
-  --m-text-3: #a59b93;
-  --m-accent-text: #e3ae8e;
-  /* Merge decisions use the slate secondary accent, so they never read as copper "new". */
+  --m-text: #edf2ee;
+  --m-text-2: #c3cbc5;
+  --m-text-3: #9da9a1;
+  --m-accent-text: #b0e4a0;
+  /* Merge decisions retain a separate slate text color. */
   --m-merge-text: #9bb3c9;
 
   /* Type scale. Nothing a person reads is smaller than 12px (uppercase labels only). */
@@ -95,7 +96,7 @@ body {
   background:
     radial-gradient(60vw 55vh at 6% -12%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 66%),
     radial-gradient(50vw 55vh at 102% 108%, color-mix(in srgb, var(--accent-2) 18%, transparent), transparent 64%),
-    linear-gradient(180deg, #110f0d, var(--m-canvas) 60%);
+    linear-gradient(180deg, #0d110f, var(--m-canvas) 60%);
   color: var(--m-text);
   font-family: var(--font-ui);
   font-size: var(--m-fs-body);
@@ -155,10 +156,12 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(150deg, var(--accent-hi), var(--accent) 50%, var(--accent-deep));
-  color: #241309;
+  overflow: hidden;
+  flex: none;
+}
+.brand-mark img {
+  width: 100%;
+  height: 100%;
 }
 .nav-item {
   display: flex;
@@ -306,7 +309,7 @@ body {
   bottom: 0;
   left: 0;
   padding: 18px 10px 8px;
-  background: linear-gradient(transparent, rgba(12, 10, 9, 0.85));
+  background: linear-gradient(transparent, rgba(9, 12, 11, 0.85));
   color: var(--m-text);
   font-size: var(--m-fs-small);
   text-align: left;
@@ -418,7 +421,7 @@ body {
   min-height: 320px;
   padding: 14px;
   border-radius: var(--m-r-surface);
-  background: #0e0c0b;
+  background: #0b0e0c;
   box-shadow: inset 0 0 0 1px var(--m-line);
 }
 .stage img {
@@ -554,4 +557,194 @@ body {
     flex-direction: row;
     gap: 4px;
   }
+}
+
+/* Keep shared primary controls legible on the Emerald gradient. */
+.ae-btn--primary {
+  --btn-fg: var(--accent-ink);
+}
+
+/* 0.2.0: import, people and per-photo face correction. */
+.panel-block {
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  background: var(--m-raised);
+}
+.panel-block h3 {
+  margin: 0 0 4px;
+  font-size: var(--m-fs-section);
+}
+.folders,
+.jobs,
+.clusters,
+.face-grid {
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.jobs {
+  display: grid;
+  gap: 12px;
+}
+.job-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bar {
+  display: block;
+  height: 4px;
+  margin: 8px 0;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--m-hover);
+}
+.bar span {
+  display: block;
+  width: var(--p);
+  height: 100%;
+  background: var(--accent);
+}
+.clusters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.cluster {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  background: var(--m-raised);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cluster:hover {
+  background: var(--m-raised-hover);
+}
+.cluster:focus-visible,
+.face-box:focus-visible {
+  outline: 2px solid var(--focus);
+}
+.cluster-faces {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+}
+.cluster-faces img,
+.face-card img,
+.face-row img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.face-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+}
+.face-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  background: var(--m-raised);
+}
+.face-card .meta,
+.face-row .meta {
+  display: block;
+  margin: 0;
+  font-size: var(--m-fs-small);
+}
+.face-card .actions,
+.face-row .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.face-rows {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.face-row {
+  display: flex;
+  gap: 10px;
+}
+.face-row img {
+  width: 56px;
+  flex: none;
+  height: 56px;
+}
+.face-row .grow {
+  min-width: 0;
+  flex: 1;
+}
+.person-pick {
+  margin-top: 6px;
+}
+.person-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.stage.has-faces {
+  position: relative;
+}
+#face-layer {
+  position: absolute;
+  touch-action: none;
+}
+#face-layer.is-marking {
+  cursor: crosshair;
+  background: rgba(16, 27, 19, 0.28);
+}
+.face-box {
+  position: absolute;
+  padding: 0;
+  border: 2px solid #ffd27a;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.face-box.is-confirmed {
+  border-color: var(--accent-hi);
+}
+.face-box.is-unknown,
+.face-box.is-excluded {
+  border-style: dashed;
+  border-color: #a9b4ad;
+}
+.face-box span {
+  position: absolute;
+  top: 100%;
+  left: -2px;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(10, 14, 12, 0.86);
+  color: #f1f5f2;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.face-draft {
+  position: absolute;
+  border: 2px solid #fff;
+  border-radius: 6px;
 }

@@ -139,11 +139,30 @@ def finish_upload(conn, store: MediaStore, uid):
     except imaging.ImageRejected:
         abort_upload(conn, store, uid)
         raise
-    sha = sha256_file(part)
     conn.execute("DELETE FROM uploads WHERE id=?", (uid,))
-    twin = conn.execute(
+    return ingest(conn, store, part, row["filename"], row["size"], info)
+
+
+def active_twin(conn, sha):
+    return conn.execute(
         "SELECT * FROM photos WHERE blob=? AND state='active' ORDER BY created_at LIMIT 1", (sha,)
     ).fetchone()
+
+
+def record_source(conn, photo_id, source, path):
+    """A further place these exact bytes were found, without touching the photo."""
+    conn.execute(
+        "INSERT OR IGNORE INTO photo_sources(photo_id, source, path, seen_at) VALUES(?,?,?,?)",
+        (photo_id, source, str(path)[:1000], iso_now()),
+    )
+
+
+def ingest(conn, store: MediaStore, part, filename, size, info=None):
+    """Keep a validated file as an original and create its photo, or report the exact twin."""
+    if info is None:
+        info = imaging.inspect(part, settings(conn)["max_megapixels"] * 1_000_000)
+    sha = sha256_file(part)
+    twin = active_twin(conn, sha)
     if twin:
         part.unlink(missing_ok=True)
         return {"photo": photo_view(twin), "duplicate": True}
@@ -151,15 +170,15 @@ def finish_upload(conn, store: MediaStore, uid):
     now = iso_now()
     conn.execute(
         "INSERT OR IGNORE INTO blobs(sha256, size, mime, created_at) VALUES(?,?,?,?)",
-        (sha, row["size"], info["mime"], now),
+        (sha, size, info["mime"], now),
     )
     pid = uuid7()
     conn.execute(
         "INSERT INTO photos(id, blob, filename, format, mime, width, height, stored_width, stored_height,"
         " orientation, bytes, taken_at, camera, has_location, metadata, created_at, updated_at)"
         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (pid, sha, row["filename"], info["format"], info["mime"], info["width"], info["height"],
-         info["stored_width"], info["stored_height"], info["orientation"], row["size"],
+        (pid, sha, _clean_name(filename), info["format"], info["mime"], info["width"], info["height"],
+         info["stored_width"], info["stored_height"], info["orientation"], size,
          info["taken_at"], info["camera"], 1 if info["has_location"] else 0,
          json.dumps(info["metadata"]), now, now),
     )  # fmt: skip

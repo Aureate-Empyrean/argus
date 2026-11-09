@@ -1,87 +1,61 @@
-# Argus 0.1.0 + Meridian profile images: status
+# Argus 0.1.1 + Meridian 0.4.0 profile pictures: status
 
-Last verified 2026-11-05. This replaces the earlier working notes. Design is in
-[ARGUS.md](ARGUS.md). The goal of the owner's brief: upload a photograph, crop it precisely, assign
-it to a Person, Organization or Group, and see it throughout Meridian, with the original intact.
+Latest: **Argus 0.2.0** on aetest ([record](../../VALIDATION_PHASE5_AETEST_2026-11-09.md)). 2026-11-07: **Argus 0.1.2** (Emerald visual identity only, no data or permission change)
+was validated on aetest ([validation](../../VALIDATION_ARGUS_EMERALD_AETEST_2026-11-08.md)) and deployed to production
+([record](../../DEPLOYMENT_PHASE2_EXODUS_2026-11-07.md)). Design is in [ARGUS.md](ARGUS.md). The goal of the owner's brief: upload a
+photograph, crop it precisely, assign it to a Person, Organization or Group, and see it throughout
+Meridian, with the original intact.
 
-**That goal is not met yet.** Argus works on its own; nothing in Meridian uses it.
+| Stage | State |
+|---|---|
+| Implemented | Yes (Argus 0.1.1, Meridian 0.4.0) |
+| Tested | Yes: unit suites and a 12-step browser journey on aetest |
+| Deployed | Yes, 2026-11-07 ([record](../../DEPLOYMENT_MERIDIAN_ARGUS_2026-11-07.md)) |
+| Verified in production | Partly: health, data preservation, projection, reference lookup and enumeration paths at service level. Upload → choose → crop → display and "Used by" await the owner's browser check |
 
-## Implemented and tested
+## How it works
 
-Automated (`tests/test_argus.py`, 22 tests, passing; `ruff check` clean):
+- The owner uploads photos in Argus. In Meridian, the profile picture control (the large avatar)
+  opens a picker that lists the Argus library through the `photo-library` projection, and an
+  editor that crops a square with drag, zoom (slider, wheel, pinch), arrow keys, +/−, 0 to reset,
+  and live previews in the entity's own shape (Person rounded square, Organization small corners,
+  Group circle, as Meridian's design language already defines them).
+- Meridian stores only the photo ID and the normalised crop (schema 5, `representative_images`).
+  Rendered images come from `photo-renditions` and are cached in Meridian's memory for two minutes.
+- Meridian registers `meridian.representative-image` edges shared with `argus`, so Argus's
+  "Used by" and purge warning see them; it enumerates them at `GET /empyrean/v1/references/outgoing`.
+  Organizations and Groups are now resolvable resources, and Argus may resolve their labels.
+- Anything other than an available picture (no picture, Argus stopped or uninstalled, photo
+  trashed, deleted or unreadable) shows initials. Meridian's own data never changes because of it.
 
-- upload validation by content, size and pixel limits, damaged and disguised files, chunk order and retries;
-- metadata and EXIF orientation, originals preserved byte for byte, thumbnails without metadata;
-- crop geometry on rotated and unrotated originals, invalid crops refused, recropping does not degrade;
-- rebuilding missing or damaged derivatives, reporting a missing original;
-- identical bytes stored once, and the blob kept until its last photo is purged;
-- Trash, restore, purge confirmation (using a mocked Nexus), and resolver states;
-- gateway and resolver authentication, no path leaks;
-- both projections, called directly;
-- backup round trip and refusal of tampered archives, in the test client only;
-- the page being self-contained.
+Decision taken while building it: the picker lives **inside Meridian** (the `photo-library`
+contract exists for exactly that), so no Nexus `navigate`-with-path change was needed. "Upload in
+Argus" switches to Argus with the existing bridge action; the owner comes back by switching to
+Meridian.
 
-Browser, real Nexus iframe on aetest, 1440 px and 390 px: uploading 3 synthetic photos, the library
-grid, a rotated photo shown upright, the photo view, and "Used by" reaching the real Nexus.
+## Verified
 
-## Implemented but unverified
+- Argus: 22 tests (`tests/test_argus.py`); `ruff check` clean. The settings form defect is fixed
+  (button handler; the sandbox has no `allow-forms`).
+- Meridian: 108 tests, 9 of them for pictures (library, crop validation, set/replace/recrop,
+  groups and organizations, fallback statuses, Argus off, late registration, removal and purge
+  cleanup, enumeration paging, backup); `ruff check` and `ruff format --check` clean.
+- Browser, real Nexus iframe on aetest (`meridian/tests/e2e/pictures_e2e.py`, 12/12): picker lists
+  Argus photos, crop by drag/slider/keys and save, picture in profile and People list after a
+  reload, group circle shape, recrop, Argus stopped → initials and an explanation, 390 px, remove →
+  initials and the Nexus edge removed, no page errors. Argus "Used by" lists the Meridian group with
+  its resolved label. Screenshots in `meridian/docs/screenshots/pictures/`.
 
-- Picker mode and "Use this photo". Nexus currently ignores the path (see below), so it would land
-  on the other module's start page.
-- In the browser: Trash, restore, purge, title editing, "Show more", drag-and-drop, and "Download
-  original" (the sandbox allows downloads, but it has not been tried).
-- Layouts at 2560×1440 and 820×1180.
-- Backup and restore **through Nexus** on a real installation.
-- Projection calls through Nexus, and "Used by" with real references. No module registers a
-  reference to a photo yet.
-- Performance with a large library, and decoding near the 40 MP cap inside the 256 MiB limit.
+## Not verified / limits
 
-## Known defects
-
-- **Settings cannot be saved in the browser.** The screen submits a `<form>`, and the Nexus sandbox
-  has no `allow-forms`: confirmed on 2026-11-05 (`Blocked form submission`). Nothing is saved or
-  reported. `PUT /api/settings` works. Fix: use a button handler, as Zeus does.
-- `ruff format --check` wants to reformat 4 files; `ruff check` is clean.
-- No `requirements-dev.lock`.
-
-## Work in progress: remaining steps, in order
-
-Decisions already taken are marked; nothing below exists yet.
-
-1. **Nexus: `navigate` with a path.** The bridge action takes only a module ID, while the router
-   already supports `/app/modules/<id>?path=/…`. Add an optional `path`, validated like the router
-   (`^/[a-zA-Z0-9/_-]*$`, no `//`). Needed so Meridian can send the owner to Argus to upload and get
-   the photo back. **Check first:** `empyrean-nexus/frontend/app.js` is being changed by the separately
-   owned navigation-history work, so coordinate with it, including the Nexus version number.
-2. **Meridian 0.4.0, backend.** Make a verified backup of its database first. Then:
-   - migration 5, a table of representative images (entity, photo reference, crop, modification time);
-   - `PUT` and `DELETE /api/entities/{id}/image`;
-   - a batched avatar endpoint calling the Argus projections with Meridian's token, with a short
-     in-memory cache only (no image files or EXIF stored in Meridian);
-   - manifest: `projections.read` for both Argus projections, `references.create`, resources
-     `organization` and `group`, reference enumeration;
-   - resolver support for organizations and groups;
-   - registering a `meridian.representative-image` relation with `readers: ["argus"]`, so Argus can
-     warn before deleting a photo in use. Never a `depicts` relation.
-3. **Argus manifest:** add resolve scopes `meridian`/`organization` and `meridian`/`group`.
-4. **Meridian interface.** Photos wherever avatars appear (circle for people, softly rounded square
-   for organizations and groups); a crop editor with drag, zoom, reset, final-shape preview, mouse,
-   touch and keyboard; fallback to initials when Argus is down or a photo is missing, deleted or
-   trashed. The graph keeps its shapes; the Timeline is not redesigned.
-5. **Fix the known defects above.**
-6. **Verification.** Failure modes from the brief (Argus down, missing and deleted photo, permission
-   denied, damaged derivative, missing thumbnail); browser checks at 2560×1440, 1440×900, 820×1180
-   and 390×844 of drag, zoom, preview, save, reload and recrop; screenshots.
-7. **Documentation and aetest deployment,** then stop for the owner's visual review.
+- Layouts at 2560×1440 and 820×1180; WebKit and Firefox.
+- Argus in-browser Trash, purge, title edit, drag-and-drop and download (unchanged from 0.1.0).
+- Backup and restore through Nexus on a real installation (both modules; tested in the test client).
+- Large libraries, and decoding near the 40 MP cap within 256 MiB.
+- Argus picker mode (`/pick/...`) is no longer needed by Meridian and remains unverified.
+- A module backup over 256 MiB is refused by Argus (HTTP 507); large libraries need an offline copy.
 
 ## Planned later (out of scope now)
 
 Albums, video, large-scale import, folder sync, face recognition, geographic browsing, Chronos
 links, and moving media to Nexus shared storage once it can hold them.
-
-## Local state worth knowing
-
-- aetest's Argus holds 3 synthetic test photos and nothing else.
-- The browser QA scripts used so far lived in a temporary session folder and are not part of this
-  repository. They drove the real Nexus iframe with Playwright from
-  `G:/AureateEmpyrean/mnemosyne/node_modules/playwright`, and will need rewriting.

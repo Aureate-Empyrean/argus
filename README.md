@@ -5,16 +5,18 @@ originals, thumbnails, and bounded image renditions for other modules the owner 
 a native implementation, not a frontend to another media application
 ([ADR 0005](../architecture/decisions/0005-official-modules-own-product-implementations.md)).
 
-**Status: 0.1.0, work in progress. On the local `aetest` installation only; never deployed to
-production.** The Meridian integration this module exists for has not been built. Current state,
-known defects and the ordered next steps are in [docs/STATUS.md](docs/STATUS.md). Design and
+**Status: 0.2.0 in production since 2026-11-09** ([record](../DEPLOYMENT_PHASE4_5_EXODUS_2026-11-09.md); 0.1.1 first deployed 2026-11-07 as a new installation; [record](../DEPLOYMENT_MERIDIAN_ARGUS_2026-11-07.md)).
+**0.1.2** (Emerald visual identity, [design](docs/ARGUS.md#9-visual-identity--emerald-approved-2026-11-07)) was validated on aetest
+([validation](../VALIDATION_ARGUS_EMERALD_AETEST_2026-11-08.md)) and deployed to production on 2026-11-07 ([record](../DEPLOYMENT_PHASE2_EXODUS_2026-11-07.md)).
+**0.2.0** (needs Nexus 0.1.14) adds bulk import, Quick and Full Library backups, and local face recognition with per-photo corrections ([record](../VALIDATION_PHASE5_AETEST_2026-11-09.md), [design](docs/ARGUS.md)). 0.1.3 renamed "Used by" to the standard [Linked from other modules](../architecture/concepts/backlinks.md) and shows unresolved items ([record](../VALIDATION_PHASE4_AETEST_2026-11-09.md)). Meridian uses Argus for profile pictures. Current state, verification and limits are in
+[docs/STATUS.md](docs/STATUS.md). Design and
 security are in [docs/ARGUS.md](docs/ARGUS.md).
 
 ## Module facts
 
 | | |
 | --- | --- |
-| Module ID, version | `argus`, 0.1.0 (schema 1) |
+| Module ID, version | `argus`, 0.2.0 in source (schema 2); 0.1.2 in production (schema 1) |
 | Port | 18333 |
 | Nexus range | `>=0.1.8,<0.2.0` (tested on 0.1.9) |
 | Capabilities | `ui.application`, `storage.data`, `references.read`, `references.resolve` |
@@ -50,6 +52,12 @@ docker run --rm -v G:/AureateEmpyrean/argus:/src -v G:/AureateEmpyrean/meridian/
 
 Argus has no `requirements-dev.lock` of its own yet, so it borrows Meridian's tool versions.
 
+Inside the real aetest Nexus (read-only; application switcher icon, Emerald header, library, switching):
+
+```bash
+cd argus && PLAYWRIGHT_PATH=G:/AureateEmpyrean/mnemosyne/node_modules/playwright node tests/e2e/emerald_aetest.cjs
+```
+
 ## Build and install on the local test installation
 
 The disposable Nexus `aetest` runs at `http://localhost:12334`; start it from `empyrean-nexus`
@@ -63,7 +71,7 @@ python scripts/manifest.py    # writes manifest.local.json; re-run after every r
 
 `manifest.local.json` then goes through the normal Nexus install or update review (owner API, or
 `python -m nexus.manage` inside the gateway container; see `empyrean-nexus/docs/lifecycle-and-recovery.md`).
-Do not install on the production Nexus without the owner's explicit authorization.
+Production updates need the owner's explicit authorization.
 
 ## Licence
 

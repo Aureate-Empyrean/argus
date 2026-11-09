@@ -144,3 +144,68 @@ photo" and then asks Nexus to navigate to `<return path>/<photo-id>` in that mod
   without the database lose all identity and metadata.
 - Nexus does not encrypt backups, and they contain the originals, including any location data
   inside them. Protect them accordingly.
+
+## 9. Visual identity — Emerald (approved 2026-11-07)
+
+Argus owns an Emerald accent family, distinct from Meridian copper and Janus teal:
+
+| Role | Value |
+| --- | --- |
+| Primary / `--accent` | `#4DAD72` |
+| Light / `--accent-hi`, focus, accent text | `#B0E4A0` |
+| Deep / `--accent-deep`, secondary atmosphere | `#246747` |
+| Icon and primary-button foreground | `#101B13` |
+| Canonical icon gradient | `145deg, #B0E4A0 0%, #4DAD72 48%, #246747 100%` |
+
+The local stylesheet derives hover, selection, borders and ambient light from Emerald.
+Cool graphite surfaces replace the inherited warm tint without changing layout, spacing,
+typography or glass composition. Shared tokens and foundation remain vendored unchanged.
+Argus currently supports the shared dark theme only, including when the operating system
+prefers light; there is no separate light theme or theme switch.
+
+**One application icon:** `frontend/icon.svg` is the canonical 48×48, full-bleed square asset.
+It preserves the outline eye motif, uses a single dark symbol, and contains no rounded corners,
+shadow or additional sheen. The server embeds its exact bytes as a base64 data image into the
+header, compatible with the Nexus sandbox. The header wrapper supplies its own corner radius.
+There is no second eye drawing in JavaScript.
+
+**Nexus integration:** the manifest declares `/icon-emerald.svg`, served from this same file.
+The previous `/icon.svg` route remains a compatibility alias to the same bytes. Changing the
+manifest icon path invokes Nexus's existing cache-key refresh when the updated module is enabled
+and its updated manifest is installed. Failed refreshes retain the previous valid copy until a
+successful retry. No Nexus source changes or query-string cache overrides are required.
+A release must include both the changed asset/server and manifest; editing local source alone
+cannot update an installed Nexus cache. Regenerate the ignored `manifest.local.json` from the
+newly built image with the existing manifest script; the current pinned manifest describes the
+previous build and is left unchanged. Released as **Argus 0.1.2**: validated on aetest, where the real
+Nexus switcher shows the Emerald icon ([validation](../../VALIDATION_ARGUS_EMERALD_AETEST_2026-11-08.md)), and deployed to production on 2026-11-07 ([record](../../DEPLOYMENT_PHASE2_EXODUS_2026-11-07.md)).
+
+### Local verification (2026-11-07)
+
+- All 23 Argus tests pass in a disposable Linux container using the existing Argus runtime image
+  and a read-only source mount, including exact header/manifest SVG byte equality.
+- JavaScript syntax, Python lint and whitespace checks pass.
+- Chromium checks cover library, trash and settings at 1440×1000 and 390×844, with both dark and
+  light system preferences. The dark theme remains active; there is no horizontal page overflow.
+  Settings saving, visible focus and sandbox-compatible icon loading pass.
+- The icon is readable at 16, 24, 32 and 48 px. Its symbol has a minimum measured contrast of
+  4.67:1 against the gradient beneath the solid stroke pixels. Primary accent contrast against
+  shared layer 1 is 6.73:1; muted text against the brightest local solid surface is 6.30:1.
+- Nexus's actual SVG validator and icon-cache route pass an isolated test that starts with a
+  previous-path cached icon, refreshes on `/icon-emerald.svg`, revalidates its ETag and retains
+  the new icon while disabled. The installed switcher was checked on aetest on 2026-11-08 with 0.1.2
+  (`tests/e2e/emerald_aetest.cjs`, 26/26).
+- Native Windows full-suite uploads hit the existing read-only-handle `os.fsync` limitation in
+  storage. No storage code was changed; the full suite passes in the supported Linux runtime.
+
+## 10. Roadmap Phase 5 (0.2.0)
+
+Decisions: [D13 / ADR 0026](../../architecture/decisions/0026-argus-quick-and-full-library-backups.md), [D14 / ADR 0027](../../architecture/decisions/0027-argus-bulk-import.md), [D15 / ADR 0028](../../architecture/decisions/0028-argus-local-face-recognition.md).
+
+**Import.** A folder chosen on the device is uploaded file by file. A server-side import reads `/data/import` inside Argus's volume, only that folder, and never follows a symbolic link. SHA-256 alone finds exact duplicates, which are skipped and recorded in `photo_sources`. Sources are read and never changed. Server-side jobs persist their progress and resume after a restart.
+
+**Backups.** Nexus 0.1.14 asks for `quick` or `full`. Quick carries the database only and is labelled incomplete. Full carries the database and a manifest, and Nexus stores each original once as a content-addressed object. Restore returns only what is missing. A Quick restore never removes an original.
+
+**Face identity.** A face is `auto`, `confirmed`, `unknown` or `excluded`, and only the user can leave `auto`. Automation writes only to `auto` faces. Naming a cluster confirms faces at or above a match of 0.5; the rest stay suggestions. A correction on one face is independent of its cluster, and Undo restores what automation had. Confirmed faces build each person's reference used for later suggestions. Embeddings are stored only in Argus's database, are included in its backups, and never leave through any API.
+
+**Runtime.** Measured with the models loaded: about 150 MB, up to about 235 MB with a 1024 px image, around 0.1 to 0.2 s per image on one core. This does not fit beside the web server in the default 256 MiB, so the manifest asks for 768 MB, reviewed by the owner, and Argus refuses to enable recognition below 600 MB. Models are in `models/` with their licences (YuNet MIT, SFace Apache-2.0).

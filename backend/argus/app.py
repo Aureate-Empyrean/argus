@@ -1,10 +1,12 @@
 import base64
+import json
 import os
 import re
 import secrets
 import shutil
 import sqlite3
 import tarfile
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from . import VERSION, imaging, library, nexus
+from . import VERSION, faces, imaging, imports, library, nexus
 from .db import MIGRATIONS, Database
 from .storage import HEX, UUID, MediaStore, sha256_file
 from .util import REF, iso_now, uuid7
@@ -23,6 +25,8 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKUP_HEADER = "X-Empyrean-Backup-"
 BACKUP_FORMAT = "argus-archive"
 BACKUP_FORMAT_VERSION = 1
+BACKUP_SET_VERSION = 2  # database and manifest in the artifact; originals held as objects (ADR 0026)
+MAX_OBJECT = 2 * 1024 * 1024 * 1024
 MAX_ARTIFACT = 256 * 1024 * 1024
 PAGE = 30
 DOWNLOAD_CHUNK = 768 * 1024
@@ -93,6 +97,16 @@ def create_app(data_dir=None):
                 return JSONResponse({"detail": "Nexus gateway required"}, status_code=403)
         return await call_next(request)
 
+    importer = imports.Importer(db, store, after=lambda: recognition.kick())
+    recognition = faces.Worker(db, data)
+    app.state.importer, app.state.faces_worker = importer, recognition
+    importer.kick()
+    recognition.kick()
+    threading.Thread(target=faces.sync_references, args=(db,), daemon=True).start()
+
+    def sync_people():
+        threading.Thread(target=faces.sync_references, args=(db,), daemon=True).start()
+
     def photo_or_404(conn, pid):
         row = library.get_photo(conn, pid)
         if not row:
@@ -108,6 +122,208 @@ def create_app(data_dir=None):
             raise HTTPException(422, str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(404, "Not found") from exc
+
+    # ── Bulk import (ADR 0027) ───────────────────────────────────────
+
+    def job_errors(fn):
+        try:
+            return fn()
+        except imports.BadPath as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except library.Invalid as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, "Not found") from exc
+
+    @app.get("/api/import/folders")
+    def import_folders(path: str = ""):
+        return job_errors(lambda: imports.folders(importer.root, path))
+
+    class ImportBody(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        path: str = Field(default="", max_length=1000)
+
+    @app.post("/api/import/jobs", status_code=201)
+    def import_start(body: ImportBody):
+        return {"id": job_errors(lambda: importer.create(body.path))}
+
+    @app.get("/api/import/jobs")
+    def import_jobs():
+        with db.connect() as conn:
+            rows = conn.execute("SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 20").fetchall()
+            return {"items": [imports.view(r) for r in rows]}
+
+    @app.get("/api/import/jobs/{jid}/errors")
+    def import_errors(jid: str):
+        with db.connect() as conn:
+            rows = conn.execute("SELECT path, error FROM import_items WHERE job_id=? AND state='failed' ORDER BY seq LIMIT 200", (jid,)).fetchall()
+            return {"items": [dict(r) for r in rows]}
+
+    @app.post("/api/import/jobs/{jid}/cancel")
+    def import_cancel(jid: str):
+        job_errors(lambda: importer.cancel(jid))
+        return {"cancelling": True}
+
+    # ── Face recognition (ADR 0028) ──────────────────────────────────
+
+    def face_errors(fn):
+        try:
+            return fn()
+        except faces.Invalid as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, "Not found") from exc
+
+    class FaceSettings(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        enabled: bool
+
+    class PersonChoice(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        resource: str = Field(max_length=200)
+        label: str = Field(default="", max_length=200)
+
+    class MarkState(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        state: str = Field(max_length=20)
+
+    class Merge(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        into: str = Field(max_length=64)
+
+    class Box(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        x: float
+        y: float
+        w: float
+        h: float
+
+    @app.get("/api/faces/status")
+    def faces_status():
+        with db.connect() as conn:
+            out = faces.status(conn)
+        recognition.kick()
+        return out
+
+    @app.put("/api/faces/settings")
+    def faces_settings(body: FaceSettings):
+        with db.connect() as conn:
+            if body.enabled and not faces.status(conn)["supported"]:
+                raise HTTPException(409, "Face recognition needs more memory than Nexus has granted Argus.")
+            faces.set_enabled(conn, body.enabled)
+            out = faces.status(conn)
+        recognition.kick()
+        return out
+
+    @app.delete("/api/faces/data")
+    def faces_delete(confirm: bool = False):
+        if not confirm:
+            raise HTTPException(422, "Confirmation is required")
+        with db.connect() as conn:
+            faces.delete_all(conn)
+        for path in store.derived.rglob("face-*"):
+            path.unlink(missing_ok=True)
+        sync_people()
+        return {"deleted": True}
+
+    @app.get("/api/people")
+    def choose_person(q: str = ""):
+        return nexus.people(q)
+
+    @app.get("/api/faces/clusters")
+    def faces_clusters():
+        with db.connect() as conn:
+            return {"items": faces.clusters(conn, store, library.get_photo)}
+
+    @app.get("/api/faces/clusters/{cid}")
+    def faces_cluster(cid: str):
+        with db.connect() as conn:
+            return face_errors(lambda: faces.cluster_detail(conn, store, library.get_photo, cid))
+
+    @app.post("/api/faces/clusters/{cid}/assign")
+    def faces_assign_cluster(cid: str, body: PersonChoice):
+        with db.connect() as conn:
+            face_errors(lambda: faces.assign_cluster(conn, cid, body.resource, body.label))
+            out = face_errors(lambda: faces.cluster_detail(conn, store, library.get_photo, cid))
+        recognition.kick()
+        sync_people()
+        return out
+
+    @app.post("/api/faces/clusters/{cid}/unassign")
+    def faces_unassign_cluster(cid: str):
+        with db.connect() as conn:
+            face_errors(lambda: faces.unassign_cluster(conn, cid))
+            out = face_errors(lambda: faces.cluster_detail(conn, store, library.get_photo, cid))
+        recognition.kick()
+        sync_people()
+        return out
+
+    @app.post("/api/faces/clusters/{cid}/merge")
+    def faces_merge(cid: str, body: Merge):
+        with db.connect() as conn:
+            face_errors(lambda: faces.merge_clusters(conn, cid, body.into))
+        recognition.kick()
+        return {"merged": True}
+
+    @app.get("/api/photos/{pid}/faces")
+    def photo_faces(pid: str):
+        with db.connect() as conn:
+            return {"items": faces.photo_faces(conn, store, photo_or_404(conn, pid))}
+
+    @app.post("/api/photos/{pid}/faces", status_code=201)
+    def photo_mark_face(pid: str, body: Box):
+        with db.connect() as conn:
+            fid = face_errors(lambda: faces.add_manual(conn, photo_or_404(conn, pid), body.model_dump()))
+        recognition.kick()
+        return {"id": fid}
+
+    def after_face():
+        recognition.kick()
+        sync_people()
+
+    @app.post("/api/faces/{fid}/assign")
+    def face_assign(fid: str, body: PersonChoice):
+        with db.connect() as conn:
+            face_errors(lambda: faces.assign_face(conn, fid, body.resource, body.label))
+        after_face()
+        return {"saved": True}
+
+    @app.post("/api/faces/{fid}/confirm")
+    def face_confirm(fid: str):
+        with db.connect() as conn:
+            face_errors(lambda: faces.confirm_face(conn, fid))
+        after_face()
+        return {"saved": True}
+
+    @app.post("/api/faces/{fid}/state")
+    def face_state(fid: str, body: MarkState):
+        with db.connect() as conn:
+            face_errors(lambda: faces.mark_face(conn, fid, body.state))
+        after_face()
+        return {"saved": True}
+
+    @app.post("/api/faces/{fid}/reset")
+    def face_reset(fid: str):
+        with db.connect() as conn:
+            face_errors(lambda: faces.reset_face(conn, fid))
+        after_face()
+        return {"saved": True}
+
+    @app.delete("/api/faces/{fid}")
+    def face_delete(fid: str):
+        with db.connect() as conn:
+            face_errors(lambda: faces.delete_manual(conn, fid))
+        after_face()
+        return {"deleted": True}
+
+    @app.get("/empyrean/v1/references/outgoing")
+    def protocol_outgoing(request: Request, limit: int = 100, cursor: str | None = None):
+        """Entity References v2: the confirmed people in photos, so Nexus can rebuild its index."""
+        require_resolver(request)
+        if cursor is not None and not cursor.isdigit():
+            raise HTTPException(422, "Invalid cursor")
+        with db.connect() as conn:
+            return faces.outgoing(conn, max(1, min(limit, 200)), cursor)
 
     @app.get("/health")
     def health():
@@ -237,13 +453,17 @@ def create_app(data_dir=None):
             return errors(lambda: library.put_chunk(conn, store, uid, index, body.data))
 
     @app.post("/api/uploads/{uid}/finish", status_code=201)
-    def upload_finish(uid: str):
+    def upload_finish(uid: str, source: str = ""):
         if not UUID.fullmatch(uid):
             raise HTTPException(404, "Not found")
         with db.connect() as conn:
             result = errors(lambda: library.finish_upload(conn, store, uid))
+            if source:
+                library.record_source(conn, result["photo"]["id"], "local", source)
             row = library.get_photo(conn, result["photo"]["id"])
-            return {**result, "photo": {**result["photo"], "thumbnail": thumb(conn, row)}}
+            out = {**result, "photo": {**result["photo"], "thumbnail": thumb(conn, row)}}
+        recognition.kick()
+        return out
 
     @app.delete("/api/uploads/{uid}")
     def upload_abort(uid: str):
@@ -381,9 +601,101 @@ def create_app(data_dir=None):
         dest.execute("PRAGMA journal_mode=DELETE")
         dest.close()
 
+    def backup_headers(version, completeness):
+        return {
+            BACKUP_HEADER + "Module": "argus", BACKUP_HEADER + "Module-Version": VERSION,
+            BACKUP_HEADER + "Format": BACKUP_FORMAT, BACKUP_HEADER + "Format-Version": str(version),
+            BACKUP_HEADER + "Created-At": iso_now(), BACKUP_HEADER + "Restorable-By": f">={VERSION},<1",
+            BACKUP_HEADER + "Completeness": completeness,
+        }  # fmt: skip
+
+    def export_set(mode):
+        """Quick: database only, and labelled incomplete. Full: database plus a manifest of every
+        original; Nexus then fetches the originals it does not already hold, as objects."""
+        work = store.scratch / f"export-{uuid7()}"
+        work.mkdir()
+        artifact = store.scratch / f"export-{uuid7()}.tar"
+        try:
+            snapshot(work / "argus.sqlite3")
+            snap = sqlite3.connect(f"file:{work / 'argus.sqlite3'}?mode=ro", uri=True)
+            try:
+                objects = [{"sha256": r[0], "size": r[1]} for r in snap.execute("SELECT sha256, size FROM blobs ORDER BY sha256")]
+            finally:
+                snap.close()
+            if mode == "full":
+                missing = [o["sha256"] for o in objects if not store.has_original(o["sha256"])]
+                if missing:
+                    raise HTTPException(507, f"{len(missing)} original file(s) are missing, so a full backup is not possible")
+            (work / "manifest.json").write_text(json.dumps({"mode": mode, "algorithm": "sha256", "objects": objects}))
+            with tarfile.open(artifact, "w", format=tarfile.PAX_FORMAT) as tar:
+                tar.add(work / "argus.sqlite3", arcname="argus.sqlite3")
+                tar.add(work / "manifest.json", arcname="manifest.json")
+            headers = backup_headers(BACKUP_SET_VERSION, mode)
+            if mode == "full":
+                token = uuid7()
+                for old in store.scratch.glob("objects-*.json"):
+                    old.unlink(missing_ok=True)
+                (store.scratch / f"objects-{token}.json").write_text(json.dumps(objects))
+                headers[BACKUP_HEADER + "Objects"] = token
+        except BaseException:
+            artifact.unlink(missing_ok=True)
+            raise
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        return FileResponse(artifact, media_type="application/x-tar", background=BackgroundTask(artifact.unlink, missing_ok=True), headers=headers)
+
+    @app.get("/empyrean/v1/backup/objects")
+    def backup_objects(export: str, request: Request):
+        require_resolver(request)
+        if not UUID.fullmatch(export):
+            raise HTTPException(404, "Unknown export")
+        path = store.scratch / f"objects-{export}.json"
+        if not path.is_file():
+            raise HTTPException(404, "Unknown export")
+        return {"objects": json.loads(path.read_text())}
+
+    @app.get("/empyrean/v1/backup/object/{sha}")
+    def backup_object(sha: str, request: Request):
+        require_resolver(request)
+        if not HEX.fullmatch(sha) or not store.has_original(sha):
+            raise HTTPException(404, "Unknown object")
+        return FileResponse(store.original_path(sha), media_type="application/octet-stream")
+
+    @app.post("/empyrean/v1/backup/objects/missing")
+    def backup_objects_missing(body: dict, request: Request):
+        require_resolver(request)
+        wanted = [o.get("sha256", "") for o in body.get("objects", []) if isinstance(o, dict)]
+        return {"missing": [s for s in wanted if HEX.fullmatch(s) and not store.has_original(s)]}
+
+    @app.post("/empyrean/v1/backup/object/{sha}")
+    async def backup_receive_object(sha: str, request: Request):
+        """An original returned during a restore: added under its digest, never replacing one."""
+        require_resolver(request)
+        if not HEX.fullmatch(sha):
+            raise HTTPException(404, "Unknown object")
+        path = store.scratch / f"object-{uuid7()}"
+        size = 0
+        try:
+            with open(path, "wb") as out:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_OBJECT:
+                        raise HTTPException(413, "Object is too large")
+                    out.write(chunk)
+            if await run_in_threadpool(sha256_file, path) != sha:
+                raise HTTPException(422, "The object does not match its digest")
+            await run_in_threadpool(store.put_original, path, sha)
+        finally:
+            path.unlink(missing_ok=True)
+        return {"stored": True}
+
     @app.post("/empyrean/v1/backup/export")
     def backup_export(request: Request):
         require_resolver(request)
+        mode = request.headers.get(BACKUP_HEADER + "Mode")
+        if mode in ("quick", "full"):
+            return export_set(mode)
+        # Backup v1, for a Nexus without objects: everything in one archive, or refused.
         work = store.scratch / f"export-{uuid7()}"
         work.mkdir()
         artifact = store.scratch / f"export-{uuid7()}.tar"
@@ -406,9 +718,7 @@ def create_app(data_dir=None):
             shutil.rmtree(work, ignore_errors=True)
         return FileResponse(
             artifact, media_type="application/x-tar", background=BackgroundTask(artifact.unlink, missing_ok=True),
-            headers={BACKUP_HEADER + "Module": "argus", BACKUP_HEADER + "Module-Version": VERSION,
-                     BACKUP_HEADER + "Format": BACKUP_FORMAT, BACKUP_HEADER + "Format-Version": str(BACKUP_FORMAT_VERSION),
-                     BACKUP_HEADER + "Created-At": iso_now(), BACKUP_HEADER + "Restorable-By": f">={VERSION},<1"},
+            headers=backup_headers(BACKUP_FORMAT_VERSION, "full"),
         )  # fmt: skip
 
     async def receive_artifact(request):
@@ -434,8 +744,10 @@ def create_app(data_dir=None):
                    if k.lower().startswith(BACKUP_HEADER.lower())}  # fmt: skip
         if headers.get("module") != "argus" or headers.get("format") != BACKUP_FORMAT:
             raise ValueError("Not an Argus backup")
-        if headers.get("format-version") != str(BACKUP_FORMAT_VERSION):
+        if headers.get("format-version") not in (str(BACKUP_FORMAT_VERSION), str(BACKUP_SET_VERSION)):
             raise ValueError("Unsupported backup format version")
+        as_set = headers.get("format-version") == str(BACKUP_SET_VERSION)
+        completeness = headers.get("completeness", "quick" if as_set else "full")
         work = Path(extract_to) if extract_to else store.scratch / f"check-{uuid7()}"
         work.mkdir(parents=True, exist_ok=True)
         try:
@@ -447,7 +759,9 @@ def create_app(data_dir=None):
                         raise ValueError("Backup contains an unexpected entry")
                     if name == "argus.sqlite3":
                         dest = work / "argus.sqlite3"
-                    elif name.startswith("originals/") and HEX.fullmatch(name[10:]):
+                    elif as_set and name == "manifest.json":
+                        dest = work / "manifest.json"
+                    elif not as_set and name.startswith("originals/") and HEX.fullmatch(name[10:]):
                         dest = work / "originals" / name[10:]
                         originals.add(name[10:])
                     else:
@@ -469,13 +783,24 @@ def create_app(data_dir=None):
                 raise ValueError("Backup is not a readable Argus database") from exc
             finally:
                 snap.close()
-            if needed - originals:
+            if as_set:
+                manifest = json.loads((work / "manifest.json").read_text())
+                listed = {o["sha256"] for o in manifest["objects"]}
+                if completeness == "full" and needed - listed:
+                    raise ValueError("The backup's manifest does not cover every original")
+                if extract_to and completeness == "full":
+                    absent = [s for s in needed if not store.has_original(s)]
+                    if absent:
+                        raise ValueError(f"{len(absent)} original file(s) of this backup have not been returned")
+                if extract_to:
+                    (work / "completeness").write_text(completeness)
+            elif needed - originals:
                 raise ValueError("Backup is missing original files")
             for sha in originals:
                 if sha256_file(work / "originals" / sha) != sha:
                     raise ValueError("An original file in the backup is damaged")
             return work
-        except (tarfile.TarError, OSError) as exc:
+        except (tarfile.TarError, OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Backup is not a readable archive") from exc
         finally:
             if not extract_to:
@@ -510,7 +835,9 @@ def create_app(data_dir=None):
             # Caches describe the old data; they are rebuilt on demand.
             conn.execute("DELETE FROM derivatives")
             conn.execute("DELETE FROM uploads")
-            conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('restore_pending', '1')")
+            # A Quick restore says nothing about media, so it can never remove an original.
+            quick = (work / "completeness").is_file() and (work / "completeness").read_text() == "quick"
+            conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('restore_pending', ?)", ("quick" if quick else "1",))
         shutil.rmtree(store.derived, ignore_errors=True)
         store.derived.mkdir(parents=True, exist_ok=True)
 
@@ -536,7 +863,10 @@ def create_app(data_dir=None):
         clean-up waits until Nexus finalizes)."""
         require_resolver(request)
         with db.connect() as conn:
-            if conn.execute("SELECT value FROM settings WHERE key='restore_pending'").fetchone():
+            pending = conn.execute("SELECT value FROM settings WHERE key='restore_pending'").fetchone()
+            if pending and pending[0] == "quick":
+                conn.execute("DELETE FROM settings WHERE key='restore_pending'")
+            elif pending:
                 keep = {r[0] for r in conn.execute("SELECT sha256 FROM blobs")}
                 for f in store.originals.rglob("*"):
                     if f.is_file() and HEX.fullmatch(f.name) and f.name not in keep:
@@ -546,6 +876,7 @@ def create_app(data_dir=None):
 
     # ── Interface ────────────────────────────────────────────────────
 
+    @app.get("/icon-emerald.svg", include_in_schema=False)
     @app.get("/icon.svg", include_in_schema=False)
     def app_icon():
         return FileResponse(ROOT / "frontend/icon.svg", media_type="image/svg+xml")
@@ -553,7 +884,10 @@ def create_app(data_dir=None):
     @app.get("/{path:path}", response_class=HTMLResponse)
     def ui(path: str):
         html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
-        script = (ROOT / "frontend/app.js").read_text(encoding="utf-8")
+        icon = base64.b64encode((ROOT / "frontend/icon.svg").read_bytes()).decode()
+        script = (ROOT / "frontend/app.js").read_text(encoding="utf-8").replace(
+            "/*ARGUS_ICON*/", "data:image/svg+xml;base64," + icon
+        )
         return html.replace("/*STYLE*/", style).replace("/*SCRIPT*/", script)
 
     return app

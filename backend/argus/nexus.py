@@ -69,3 +69,30 @@ def usage(photo_ref):
                 pass
         out.append(entry)
     return {"known": True, "items": out}
+
+
+def create_reference(source, target, relation, readers):
+    out = _call("POST", "/api/v1/module/references", {"source": source, "target": target, "relation": relation, "readers": readers})
+    return out["reference"]["id"]
+
+
+def delete_reference(reference_id):
+    try:
+        _call("DELETE", f"/api/v1/module/references/{reference_id}")
+    except NexusUnavailable as exc:
+        if "404" not in str(exc):
+            raise
+
+
+def people(q):
+    """Meridian's people-directory projection: names only, for choosing who a face is."""
+    try:
+        page = _call("POST", "/api/v1/module/projections/query", {
+            "module": "meridian", "projection": "people-directory", "query": {"q": q[:100], "limit": 10}, "cursor": None})  # fmt: skip
+    except NexusUnavailable:
+        return {"availability": "nexus_unreachable", "items": []}
+    if page.get("availability") != "available":
+        return {"availability": page.get("availability") or "unavailable", "items": []}
+    return {"availability": "available", "items": [
+        {"resource": x["resource"], "label": str(x.get("label") or "")[:200]}
+        for x in page.get("items") or [] if str(x.get("resource", "")).startswith("nexus:v1:meridian:person:")]}  # fmt: skip

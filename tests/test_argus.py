@@ -427,3 +427,23 @@ def test_page_is_self_contained(client):
     assert used <= defined, sorted(used - defined)
     icon = TestClient(client.app).get("/icon.svg")
     assert icon.headers["content-type"].startswith("image/svg+xml") and "<script" not in icon.text
+
+
+def test_header_and_manifest_serve_one_canonical_icon(client):
+    import json
+    import re
+
+    from argus.app import ROOT
+
+    public = TestClient(client.app)
+    manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["icon"] == "/icon-emerald.svg"
+    asset = (ROOT / "frontend/icon.svg").read_bytes()
+    response = public.get(manifest["icon"])
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert response.content == asset == public.get("/icon.svg").content
+    page = public.get("/").text
+    encoded = re.search(r'const ARGUS_ICON = "data:image/svg\+xml;base64,([^"]+)"', page)
+    assert encoded and base64.b64decode(encoded[1]) == asset
+    assert "/*ARGUS_ICON*/" not in page

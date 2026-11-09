@@ -37,3 +37,22 @@ build/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Secrets, personal data and generated artifacts (P0B)
+artifacts/
+originals/
+uploads/
+renditions/
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.mp4
+*.mov
+*.webm
+*.tar
+*.tar.gz
+*.zip
+*.bak
+*.dump
+models/*.onnx
