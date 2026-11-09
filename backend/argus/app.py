@@ -888,6 +888,14 @@ def create_app(data_dir=None):
         script = (ROOT / "frontend/app.js").read_text(encoding="utf-8").replace(
             "/*ARGUS_ICON*/", "data:image/svg+xml;base64," + icon
         )
+        # Nexus navigation contract: the shared SDK, then Argus's adapter.
+        script = "\n".join(
+            [
+                script,
+                (ROOT / "frontend/vendor/nexus-navigation.js").read_text(encoding="utf-8"),
+                (ROOT / "frontend/navigation.js").read_text(encoding="utf-8"),
+            ]
+        )
         return html.replace("/*STYLE*/", style).replace("/*SCRIPT*/", script)
 
     return app

@@ -748,3 +748,27 @@ body {
   border: 2px solid #fff;
   border-radius: 6px;
 }
+
+/* Navigation: drafts kept while moving through history or leaving this module. */
+.draft-tray {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(640px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+}
+.draft-tray-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.draft-tray-row .grow {
+  flex: 1 1 220px;
+  min-width: 0;
+}

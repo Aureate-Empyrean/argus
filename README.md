@@ -12,6 +12,13 @@ a native implementation, not a frontend to another media application
 [docs/STATUS.md](docs/STATUS.md). Design and
 security are in [docs/ARGUS.md](docs/ARGUS.md).
 
+## Navigation (0.3.0 on aetest)
+
+Photos, People, clusters, Import, Trash and Settings are browser history entries through the Nexus navigation contract
+(`frontend/navigation.js`). Picker mode belongs to the bootstrap path, so it survives moves and a reload. How far the
+library was loaded and scrolled is private per-entry state. "Linked from other modules" has Open for resolvable,
+available items. See `../empyrean-nexus/docs/navigation-history.md`.
+
 ## Module facts
 
 | | |

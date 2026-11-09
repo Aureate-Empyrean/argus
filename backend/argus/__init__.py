@@ -1,3 +1,3 @@
 """Argus: the user's own photographs, stored privately and owned by Aureate Empyrean."""
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"

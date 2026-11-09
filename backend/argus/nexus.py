@@ -65,6 +65,7 @@ def usage(photo_ref):
                 entry["availability"] = res.get("availability")
                 if res.get("availability") == "available":
                     entry["label"] = res.get("label")
+                    entry["open_path"] = (res.get("open") or {}).get("module_path")
             except NexusUnavailable:
                 pass
         out.append(entry)

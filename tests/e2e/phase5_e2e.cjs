@@ -9,11 +9,18 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || "playwright");
 
-const NEXUS = "http://localhost:12334";
+// This journey deletes all recognition data and every import folder on its target, so it runs
+// on a disposable installation: NEXUS_URL, INSTALLATION and OWNER_FILE name it.
+const NEXUS = process.env.NEXUS_URL || "http://localhost:12334";
+const INSTALLATION = process.env.INSTALLATION || "aetest";
+if (INSTALLATION === "aetest" && process.env.ALLOW_AETEST_WIPE !== "1") {
+  console.error("Refusing to run on aetest: this journey deletes recognition data and import folders. Use a disposable installation.");
+  process.exit(2);
+}
 const RUN = Date.now().toString(36);
 const LARGE = `large-${RUN}`;
 const PEOPLE = `people-${RUN}`;
-const SHOTS = path.join(__dirname, "../../docs/screenshots/0.2.0");
+const SHOTS = process.env.SHOTS_DIR || path.join(__dirname, "../../docs/screenshots/0.2.0");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let passed = 0;
 const check = (ok, what) => {
@@ -32,9 +39,9 @@ async function until(fn, what, seconds = 180) {
   }
   check(false, `${what} (timed out)`);
 }
-const inArgus = (code, input) => execFileSync("docker", ["exec", "-i", "aetest-module-argus", "python", "-c", code], { input, encoding: "utf8", maxBuffer: 1 << 26 });
-const manage = (...args) => JSON.parse(execFileSync("docker", ["exec", "aetest-nexus-1", "python", "-m", "nexus.manage", ...args], { encoding: "utf8", maxBuffer: 1 << 26, timeout: 280000 }).trim().split("\n").pop());
-const nexusSql = (sql, arg) => JSON.parse(execFileSync("docker", ["exec", "aetest-nexus-1", "python", "-c", `import sqlite3,json,sys
+const inArgus = (code, input) => execFileSync("docker", ["exec", "-i", `${INSTALLATION}-module-argus`, "python", "-c", code], { input, encoding: "utf8", maxBuffer: 1 << 26 });
+const manage = (...args) => JSON.parse(execFileSync("docker", ["exec", `${INSTALLATION}-nexus-1`, "python", "-m", "nexus.manage", ...args], { encoding: "utf8", maxBuffer: 1 << 26, timeout: 280000 }).trim().split("\n").pop());
+const nexusSql = (sql, arg) => JSON.parse(execFileSync("docker", ["exec", `${INSTALLATION}-nexus-1`, "python", "-c", `import sqlite3,json,sys
 c=sqlite3.connect('file:/data/nexus.sqlite3?mode=ro',uri=True)
 print(json.dumps(c.execute(sys.argv[1],(sys.argv[2],)).fetchall()))`, sql, arg], { encoding: "utf8" }));
 
@@ -42,7 +49,7 @@ async function open(page, module) {
   await page.goto(`${NEXUS}/app/modules/${module}`);
   await page.locator("#username, #module-application").first().waitFor({ timeout: 30000 });
   if (await page.locator("#username").isVisible()) {
-    const owner = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../empyrean-nexus/.data/aetest-owner.json"), "utf8"));
+    const owner = JSON.parse(fs.readFileSync(process.env.OWNER_FILE || path.join(__dirname, "../../../empyrean-nexus/.data/aetest-owner.json"), "utf8"));
     await page.locator("#username").fill(owner.username);
     await page.locator("#password").fill(owner.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -147,7 +154,7 @@ for d in glob.glob("/data/import/*"):
   await a.evaluate(() => go("people"));
   await pane.locator('[data-act="faces-on"]').click();
   await until(async () => { const s = await call(a, "/faces/status"); return s.scanned === s.photos; }, "every photo is scanned", 280);
-  const oom = execFileSync("docker", ["inspect", "aetest-module-argus", "--format", "{{.State.OOMKilled}} {{.RestartCount}} {{.HostConfig.Memory}}"], { encoding: "utf8" }).trim();
+  const oom = execFileSync("docker", ["inspect", `${INSTALLATION}-module-argus`, "--format", "{{.State.OOMKilled}} {{.RestartCount}} {{.HostConfig.Memory}}"], { encoding: "utf8" }).trim();
   check(oom === "false 0 805306368", `scanning stayed within the 768 MB grant (${oom})`);
   const clusters = (await call(a, "/faces/clusters")).items;
   const biggest = clusters.reduce((x, y) => (y.count > x.count ? y : x));
