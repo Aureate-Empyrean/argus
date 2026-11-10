@@ -54,6 +54,39 @@ Nexus's manifest cannot set custom environment variables, so limits live in Argu
 | `max_upload_mb` | 40 | 1–200 | `PUT /api/settings` (the Settings screen's Save is currently broken; see STATUS) |
 | `max_megapixels` | 32 | 1–40 | as above |
 
+## Full Restore integrity (WP04c, integration candidate)
+
+Full restore verifies every original's SHA-256 and byte size against the backup database.
+Format-2 manifests must agree exactly with that database and declare SHA-256 and completeness.
+The missing-object response includes damaged originals, not just absent paths. Returned objects
+are verified in staging, then installed atomically; already-valid originals are kept unchanged.
+Full export and object download also refuse damaged originals. Ordinary upload deduplication,
+gallery reads and Quick backups do not gain whole-library hashing.
+
+Format 1 archives remain supported when their database provides valid SHA-256 identities and
+sizes and their embedded originals verify. Backups without trustworthy identities/sizes are
+rejected explicitly. Quick restore remains incomplete and never removes originals. Existing
+backup format versions, schema 2, gallery 0.4.0 and navigation contracts are unchanged.
+
+Before applying metadata, restore retains a SQLite snapshot under
+`/data/restore-recovery/<attempt>/before.sqlite3` and writes durable `/data/restore-state.json`.
+Caught application failures attempt database rollback and return 503, never success. An abrupt
+process exit leaves an incomplete marker: finalization returns 409 until a verified restore is
+repeated. Validation failures return 422 before metadata replacement. Finalization rechecks
+all Full originals before cleanup; corruption returns 409 and leaves cleanup pending.
+
+Repair preserves replaced bytes, and Full finalization preserves otherwise-pruned originals,
+under `/data/restore-recovery/originals/`. These files are deliberately labelled `.unverified`;
+the label makes no claim about their integrity. Recovery copies are private and retained for
+manual review; they require extra disk space and are not automatically collected. Storage
+errors return actionable retry responses. For recovery, return verified objects, repeat the
+backup restore and finalize. If rollback itself fails, stop and recover using the retained
+pre-restore database and original copies; do not bypass the completion marker. Active import
+or recognition jobs must finish before restore. Nexus's existing maintenance gate remains
+responsible for preventing interactive writes throughout the restore protocol.
+
+See [validation and integration notes](docs/WP04C_RESTORE_INTEGRITY.md).
+
 ## Develop and test
 
 Tests run in Linux containers; Windows-native pytest is not supported in this workspace. This

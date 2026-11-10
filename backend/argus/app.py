@@ -18,7 +18,8 @@ from starlette.concurrency import run_in_threadpool
 
 from . import VERSION, faces, imaging, imports, library, nexus
 from .db import MIGRATIONS, Database
-from .storage import HEX, UUID, MediaStore, sha256_file
+from .restore import RestoreState, database_objects, object_specs, verify_originals
+from .storage import HEX, UUID, IntegrityError, MediaStore, StorageError, sha256_file, verify_file
 from .util import REF, iso_now, uuid7
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -628,6 +629,9 @@ def create_app(data_dir=None):
             BACKUP_HEADER + "Completeness": completeness,
         }  # fmt: skip
 
+    restore_state = RestoreState(data)
+    restore_lock = threading.RLock()
+
     def export_set(mode):
         """Quick: database only, and labelled incomplete. Full: database plus a manifest of every
         original; Nexus then fetches the originals it does not already hold, as objects."""
@@ -638,14 +642,26 @@ def create_app(data_dir=None):
             snapshot(work / "argus.sqlite3")
             snap = sqlite3.connect(f"file:{work / 'argus.sqlite3'}?mode=ro", uri=True)
             try:
-                objects = [{"sha256": r[0], "size": r[1]} for r in snap.execute("SELECT sha256, size FROM blobs ORDER BY sha256")]
+                objects = [
+                    {"sha256": r[0], "size": r[1]}
+                    for r in snap.execute("SELECT sha256, size FROM blobs ORDER BY sha256")
+                ]
             finally:
                 snap.close()
             if mode == "full":
-                missing = [o["sha256"] for o in objects if not store.has_original(o["sha256"])]
+                missing = [
+                    o["sha256"]
+                    for o in objects
+                    if not store.verify_original(o["sha256"], o["size"])
+                ]
                 if missing:
-                    raise HTTPException(507, f"{len(missing)} original file(s) are missing, so a full backup is not possible")
-            (work / "manifest.json").write_text(json.dumps({"mode": mode, "algorithm": "sha256", "objects": objects}))
+                    raise HTTPException(
+                        507,
+                        f"{len(missing)} original file(s) are missing or damaged, so a full backup is not possible",
+                    )
+            (work / "manifest.json").write_text(
+                json.dumps({"mode": mode, "algorithm": "sha256", "objects": objects})
+            )
             with tarfile.open(artifact, "w", format=tarfile.PAX_FORMAT) as tar:
                 tar.add(work / "argus.sqlite3", arcname="argus.sqlite3")
                 tar.add(work / "manifest.json", arcname="manifest.json")
@@ -661,7 +677,12 @@ def create_app(data_dir=None):
             raise
         finally:
             shutil.rmtree(work, ignore_errors=True)
-        return FileResponse(artifact, media_type="application/x-tar", background=BackgroundTask(artifact.unlink, missing_ok=True), headers=headers)
+        return FileResponse(
+            artifact,
+            media_type="application/x-tar",
+            background=BackgroundTask(artifact.unlink, missing_ok=True),
+            headers=headers,
+        )
 
     @app.get("/empyrean/v1/backup/objects")
     def backup_objects(export: str, request: Request):
@@ -678,17 +699,26 @@ def create_app(data_dir=None):
         require_resolver(request)
         if not HEX.fullmatch(sha) or not store.has_original(sha):
             raise HTTPException(404, "Unknown object")
+        if not store.verify_original(sha):
+            raise HTTPException(
+                507, "Original failed SHA-256 verification; repair it before backup."
+            )
         return FileResponse(store.original_path(sha), media_type="application/octet-stream")
 
     @app.post("/empyrean/v1/backup/objects/missing")
     def backup_objects_missing(body: dict, request: Request):
         require_resolver(request)
-        wanted = [o.get("sha256", "") for o in body.get("objects", []) if isinstance(o, dict)]
-        return {"missing": [s for s in wanted if HEX.fullmatch(s) and not store.has_original(s)]}
+        try:
+            wanted = object_specs(body.get("objects"))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {
+            "missing": [sha for sha, size in wanted.items() if not store.verify_original(sha, size)]
+        }
 
     @app.post("/empyrean/v1/backup/object/{sha}")
     async def backup_receive_object(sha: str, request: Request):
-        """An original returned during a restore: added under its digest, never replacing one."""
+        """Verify returned bytes; atomically repair only an invalid original."""
         require_resolver(request)
         if not HEX.fullmatch(sha):
             raise HTTPException(404, "Unknown object")
@@ -703,7 +733,14 @@ def create_app(data_dir=None):
                     out.write(chunk)
             if await run_in_threadpool(sha256_file, path) != sha:
                 raise HTTPException(422, "The object does not match its digest")
-            await run_in_threadpool(store.put_original, path, sha)
+            await run_in_threadpool(store.restore_original, path, sha)
+        except IntegrityError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (OSError, StorageError) as exc:
+            raise HTTPException(
+                503,
+                "Original could not be installed safely. Retained files are unchanged or recoverable; retry restore.",
+            ) from exc
         finally:
             path.unlink(missing_ok=True)
         return {"stored": True}
@@ -720,11 +757,23 @@ def create_app(data_dir=None):
         artifact = store.scratch / f"export-{uuid7()}.tar"
         try:
             snapshot(work / "argus.sqlite3")
-            with db.connect() as conn:
-                blobs = [r["sha256"] for r in conn.execute("SELECT sha256 FROM blobs ORDER BY sha256")]
-            total = sum(store.original_path(b).stat().st_size for b in blobs if store.has_original(b))
+            snap = sqlite3.connect(f"file:{work / 'argus.sqlite3'}?mode=ro", uri=True)
+            try:
+                expected = database_objects(snap)
+            finally:
+                snap.close()
+            try:
+                verify_originals(store, expected)
+            except ValueError as exc:
+                raise HTTPException(507, str(exc)) from exc
+            blobs = list(expected)
+            total = sum(
+                store.original_path(b).stat().st_size for b in blobs if store.has_original(b)
+            )
             if total > MAX_ARTIFACT:
-                raise HTTPException(507, "The library is larger than one module backup can hold (256 MiB)")
+                raise HTTPException(
+                    507, "The library is larger than one module backup can hold (256 MiB)"
+                )
             with tarfile.open(artifact, "w", format=tarfile.PAX_FORMAT) as tar:
                 tar.add(work / "argus.sqlite3", arcname="argus.sqlite3")
                 for b in blobs:
@@ -763,17 +812,24 @@ def create_app(data_dir=None):
                    if k.lower().startswith(BACKUP_HEADER.lower())}  # fmt: skip
         if headers.get("module") != "argus" or headers.get("format") != BACKUP_FORMAT:
             raise ValueError("Not an Argus backup")
-        if headers.get("format-version") not in (str(BACKUP_FORMAT_VERSION), str(BACKUP_SET_VERSION)):
+        if headers.get("format-version") not in (
+            str(BACKUP_FORMAT_VERSION),
+            str(BACKUP_SET_VERSION),
+        ):
             raise ValueError("Unsupported backup format version")
         as_set = headers.get("format-version") == str(BACKUP_SET_VERSION)
-        completeness = headers.get("completeness", "quick" if as_set else "full")
+        completeness = headers.get("completeness", "full" if not as_set else None)
         work = Path(extract_to) if extract_to else store.scratch / f"check-{uuid7()}"
         work.mkdir(parents=True, exist_ok=True)
         try:
             originals = set()
+            members = set()
             with tarfile.open(path, "r:") as tar:
                 for m in tar:
                     name = m.name
+                    if name in members:
+                        raise ValueError("Backup contains duplicate entries")
+                    members.add(name)
                     if not m.isfile():
                         raise ValueError("Backup contains an unexpected entry")
                     if name == "argus.sqlite3":
@@ -797,27 +853,42 @@ def create_app(data_dir=None):
                     raise ValueError("Backup database is damaged")
                 if not 1 <= snap.execute("PRAGMA user_version").fetchone()[0] <= len(MIGRATIONS):
                     raise ValueError("Backup schema is not supported by this version")
-                needed = {r[0] for r in snap.execute("SELECT sha256 FROM blobs")}
+                if snap.execute("PRAGMA foreign_key_check").fetchone():
+                    raise ValueError("Backup database has broken references")
+                expected = database_objects(snap)
+                needed = set(expected)
             except sqlite3.Error as exc:
                 raise ValueError("Backup is not a readable Argus database") from exc
             finally:
                 snap.close()
             if as_set:
                 manifest = json.loads((work / "manifest.json").read_text())
-                listed = {o["sha256"] for o in manifest["objects"]}
-                if completeness == "full" and needed - listed:
-                    raise ValueError("The backup's manifest does not cover every original")
+                if not isinstance(manifest, dict) or manifest.get("algorithm") != "sha256":
+                    raise ValueError(
+                        "Backup requires trustworthy SHA-256 checksums; use a verified Full backup"
+                    )
+                mode = manifest.get("mode")
+                if mode not in {"quick", "full"} or completeness not in (None, mode):
+                    raise ValueError("Backup completeness disagrees with its manifest")
+                completeness = mode
+                if object_specs(manifest.get("objects")) != expected:
+                    raise ValueError(
+                        "Backup manifest identities and sizes do not match its database"
+                    )
                 if extract_to and completeness == "full":
-                    absent = [s for s in needed if not store.has_original(s)]
-                    if absent:
-                        raise ValueError(f"{len(absent)} original file(s) of this backup have not been returned")
-                if extract_to:
-                    (work / "completeness").write_text(completeness)
+                    verify_originals(store, expected)
             elif needed - originals:
                 raise ValueError("Backup is missing original files")
+            elif completeness != "full":
+                raise ValueError("Legacy archives must contain verified originals for Full restore")
             for sha in originals:
-                if sha256_file(work / "originals" / sha) != sha:
-                    raise ValueError("An original file in the backup is damaged")
+                if not verify_file(work / "originals" / sha, sha, expected.get(sha)):
+                    raise ValueError(
+                        "An original file in the backup is damaged (SHA-256/size verification failed)"
+                    )
+            if extract_to:
+                (work / "completeness").write_text(completeness)
+                (work / "expected.json").write_text(json.dumps(expected))
             return work
         except (tarfile.TarError, OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Backup is not a readable archive") from exc
@@ -838,27 +909,62 @@ def create_app(data_dir=None):
         return {"valid": True}
 
     def replace_data(work):
-        # Originals are content-addressed: adding the backup's files never clobbers anything.
-        for f in (work / "originals").glob("*"):
-            target = store.original_path(f.name)
-            if not target.exists():
-                store.put_original(f, f.name)
-        snap = sqlite3.connect(f"file:{work / 'argus.sqlite3'}?mode=ro", uri=True)
-        try:
+        with restore_lock, importer.lock, recognition.lock:
+            # Nexus blocks interactive writes during restore; reject active background writers too.
             with db.connect() as conn:
-                snap.backup(conn)
-        finally:
-            snap.close()
-        db.migrate()
-        with db.connect() as conn:
-            # Caches describe the old data; they are rebuilt on demand.
-            conn.execute("DELETE FROM derivatives")
-            conn.execute("DELETE FROM uploads")
-            # A Quick restore says nothing about media, so it can never remove an original.
-            quick = (work / "completeness").is_file() and (work / "completeness").read_text() == "quick"
-            conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('restore_pending', ?)", ("quick" if quick else "1",))
-        shutil.rmtree(store.derived, ignore_errors=True)
-        store.derived.mkdir(parents=True, exist_ok=True)
+                busy = conn.execute(
+                    "SELECT 1 FROM import_jobs WHERE state IN ('scanning','running','cancelling') LIMIT 1"
+                ).fetchone()
+            process = recognition.process
+            importing = importer.thread and importer.thread.is_alive()
+            if busy or importing or (process and process.poll() is None):
+                raise HTTPException(
+                    409, "Wait for import and recognition jobs to finish before restoring."
+                )
+            expected = json.loads((work / "expected.json").read_text())
+            mode = (work / "completeness").read_text()
+            record = None
+            changed = False
+            try:
+                record = restore_state.begin(db, mode, expected)
+                for sha, size in expected.items():
+                    source = work / "originals" / sha
+                    if source.is_file():
+                        store.restore_original(source, sha, size)
+                if mode == "full":
+                    verify_originals(store, expected)
+                snap = sqlite3.connect(f"file:{work / 'argus.sqlite3'}?mode=ro", uri=True)
+                try:
+                    changed = True
+                    with db.connect() as conn:
+                        snap.backup(conn)
+                finally:
+                    snap.close()
+                db.migrate()
+                with db.connect() as conn:
+                    conn.execute("DELETE FROM derivatives")
+                    conn.execute("DELETE FROM uploads")
+                    conn.execute(
+                        "INSERT OR REPLACE INTO settings(key,value) VALUES('restore_pending',?)",
+                        ("quick" if mode == "quick" else "1",),
+                    )
+                shutil.rmtree(store.derived, ignore_errors=True)
+                store.derived.mkdir(parents=True, exist_ok=True)
+                if mode == "full":
+                    verify_originals(store, expected)
+                restore_state.write(record, "ready")
+            except Exception as exc:
+                if record:
+                    try:
+                        if changed:
+                            restore_state.rollback(db, record)
+                        restore_state.write(record, "failed")
+                    except Exception:
+                        pass  # Durable applying state still prevents finalization.
+                raise HTTPException(
+                    503,
+                    "Restore incomplete. A recovery database and original files are retained; retry from a verified backup before finalizing.",
+                ) from exc
 
     @app.post("/empyrean/v1/backup/restore")
     async def backup_restore(request: Request):
@@ -881,16 +987,43 @@ def create_app(data_dir=None):
         """After a restore: only now remove originals no restored photo uses (destructive
         clean-up waits until Nexus finalizes)."""
         require_resolver(request)
-        with db.connect() as conn:
-            pending = conn.execute("SELECT value FROM settings WHERE key='restore_pending'").fetchone()
-            if pending and pending[0] == "quick":
-                conn.execute("DELETE FROM settings WHERE key='restore_pending'")
-            elif pending:
-                keep = {r[0] for r in conn.execute("SELECT sha256 FROM blobs")}
-                for f in store.originals.rglob("*"):
-                    if f.is_file() and HEX.fullmatch(f.name) and f.name not in keep:
-                        store.delete_original(f.name)
-                conn.execute("DELETE FROM settings WHERE key='restore_pending'")
+        with restore_lock:
+            try:
+                record = restore_state.read()
+                if record and record["phase"] in {"applying", "failed"}:
+                    raise ValueError(
+                        "Restore did not complete. Repeat restore from a verified backup before finalizing."
+                    )
+                with db.connect() as conn:
+                    pending = conn.execute(
+                        "SELECT value FROM settings WHERE key='restore_pending'"
+                    ).fetchone()
+                    full_ready = record and record["phase"] == "ready" and record["mode"] == "full"
+                    if (pending and pending[0] != "quick") or full_ready:
+                        if not full_ready:
+                            raise ValueError(
+                                "Legacy Full restore has no verified completion record. Repeat a verified Full restore."
+                            )
+                        expected = database_objects(conn)
+                        if expected != object_specs(record["objects"]):
+                            raise ValueError(
+                                "Library changed after restore. Repeat verified restore before finalizing."
+                            )
+                        verify_originals(store, expected)
+                        for f in store.originals.rglob("*"):
+                            if f.is_file() and HEX.fullmatch(f.name) and f.name not in expected:
+                                store.preserve_original(f.name)
+                                store.delete_original(f.name)
+                    if pending:
+                        conn.execute("DELETE FROM settings WHERE key='restore_pending'")
+                if record and record["phase"] == "ready":
+                    restore_state.write(record, "finalized")
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(
+                    503, "Finalize incomplete; retained restore state allows a safe retry."
+                ) from exc
         return {"finalized": True}
 
     # ── Interface ────────────────────────────────────────────────────

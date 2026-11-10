@@ -15,13 +15,16 @@ Layout under the data volume (never exposed through any API):
 
 Every path is built from validated hex digests, UUIDs and fixed keys, never from user input, so
 there is no traversal. Writes go to a temporary file in the same directory, are flushed to disk
-and then renamed into place; an existing original is never overwritten.
+and then renamed into place. Normal uploads never overwrite an existing original. Restore alone
+may repair a verified-invalid original after preserving its old bytes in restore-recovery.
 """
 
 import hashlib
 import os
 import re
 import shutil
+import stat
+import uuid
 from pathlib import Path
 
 HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -31,6 +34,10 @@ KEY = re.compile(r"^[a-z0-9][a-z0-9.-]{0,79}$")
 
 class StorageError(Exception):
     pass
+
+
+class IntegrityError(StorageError):
+    """Bytes cannot be authenticated against their expected content identity."""
 
 
 class MediaStore:
@@ -69,11 +76,72 @@ class MediaStore:
         os.replace(staging, target)
         return target
 
-    def verify_original(self, sha):
-        path = self.original_path(sha)
-        if not path.is_file():
-            return False
-        return sha256_file(path) == sha
+    def verify_original(self, sha, size=None):
+        return verify_file(self.original_path(sha), sha, size)
+
+    def restore_original(self, source: Path, sha: str, size=None):
+        """Restore-only verified installation. Never alter ordinary upload dedup behavior.
+
+        Valid destinations are reused unchanged. An invalid regular destination is
+        copied to private quarantine before an atomic replacement with verified bytes.
+        No caller may use presence as a substitute for verification.
+        """
+        target = self.original_path(sha)
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise StorageError(
+                "An original storage path is not a regular file; repair storage and retry."
+            )
+        if self.verify_original(sha, size):
+            # Still validate the incoming object, even when no replacement is needed.
+            if not verify_file(source, sha, size):
+                raise IntegrityError(
+                    "The returned object does not match its digest or expected size."
+                )
+            return target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staged = target.parent / f".restore-{uuid.uuid4().hex}.part"
+        try:
+            with source.open("rb") as incoming, staged.open("xb") as out:
+                shutil.copyfileobj(incoming, out, 1 << 20)
+                out.flush()
+                os.fsync(out.fileno())
+            if not verify_file(staged, sha, size):
+                raise IntegrityError(
+                    "The returned object does not match its digest or expected size."
+                )
+            if target.exists():
+                self.preserve_original(sha)
+                # A concurrent repair may already have supplied the correct content.
+                if self.verify_original(sha, size):
+                    return target
+                if os.name == "nt":
+                    os.chmod(target, 0o640)
+            os.chmod(staged, 0o440)
+            os.replace(staged, target)
+            sync_directory(target.parent)
+            if not self.verify_original(sha, size):
+                raise IntegrityError(
+                    "The installed original failed verification; restore is incomplete."
+                )
+            return target
+        finally:
+            if staged.exists():
+                os.chmod(staged, 0o600)
+                staged.unlink()
+
+    def preserve_original(self, sha):
+        """Keep bytes before restore repair or finalize removes their active path."""
+        target = self.original_path(sha)
+        quarantine = self.root / "restore-recovery" / "originals"
+        quarantine.mkdir(parents=True, exist_ok=True, mode=0o700)
+        saved = quarantine / f"{sha}-{uuid.uuid4().hex}.unverified"
+        with target.open("rb") as old, saved.open("xb") as out:
+            os.chmod(saved, 0o600)
+            shutil.copyfileobj(old, out, 1 << 20)
+            out.flush()
+            os.fsync(out.fileno())
+        sync_directory(quarantine)
+        return saved
 
     def delete_original(self, sha):
         """Remove an original. Callers must first ensure that no photo uses it."""
@@ -139,3 +207,40 @@ def sha256_file(path, chunk=1 << 20):
         while block := f.read(chunk):
             h.update(block)
     return h.hexdigest()
+
+
+def verify_file(path, sha, size=None):
+    """Streaming content verification, used only by restore/integrity workflows."""
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return False
+        with path.open("rb") as original:
+            before = os.fstat(original.fileno())
+            if not stat.S_ISREG(before.st_mode) or (size is not None and before.st_size != size):
+                return False
+            digest, count = hashlib.sha256(), 0
+            while block := original.read(1 << 20):
+                digest.update(block)
+                count += len(block)
+            after = os.fstat(original.fileno())
+        current = path.lstat()
+        return (
+            stat.S_ISREG(current.st_mode)
+            and (current.st_dev, current.st_ino) == (after.st_dev, after.st_ino)
+            and digest.hexdigest() == sha
+            and (size is None or count == size)
+            and (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)
+        )
+    except OSError:
+        return False
+
+
+def sync_directory(path):
+    # The deployed Linux runtime supports directory fsync. Windows does not expose
+    # the same operation; file flushes and atomic replacement are still performed.
+    if os.name != "nt":
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
