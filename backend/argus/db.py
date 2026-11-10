@@ -105,6 +105,11 @@ class Database:
                 db.executescript(
                     "BEGIN IMMEDIATE;\n" + MIGRATIONS[i] + f"\nPRAGMA user_version={i + 1}; COMMIT;"
                 )
+            # The gallery's order. Only an index, so an older Argus can still open this database.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS photos_timeline"
+                " ON photos(state, COALESCE(taken_at, created_at) DESC, id DESC)"
+            )
 
     @contextmanager
     def connect(self):

@@ -19,11 +19,17 @@ Photos, People, clusters, Import, Trash and Settings are browser history entries
 library was loaded and scrolled is private per-entry state. "Linked from other modules" has Open for resolvable,
 available items. See `../empyrean-nexus/docs/navigation-history.md`.
 
+## Gallery and viewer (0.4.0, not in production)
+
+Photos is a justified, image-first timeline grouped by month and day, using the capture date when the file records a usable one and the upload date otherwise (and saying so). The drop zone appears only while the library is empty; the whole page accepts a drop.
+
+`frontend/viewer.js` is the photo page: one surface over the gallery, which stays untouched underneath, so returning keeps its scroll position without a reload. Arrow keys, Escape, zoom, pan, touch gestures and a collapsible information panel are all there; `/photos/<id>` deep links are unchanged. Motion uses Meridian's durations and curves, runs only on transform and opacity, never delays anything, and respects `prefers-reduced-motion`. Browser journey: `tests/e2e/gallery_e2e.cjs`, for a disposable installation.
+
 ## Module facts
 
 | | |
 | --- | --- |
-| Module ID, version | `argus`, 0.2.0 in source (schema 2); 0.1.2 in production (schema 1) |
+| Module ID, version | `argus`, 0.4.0 in source (schema 2); 0.2.0 in production (schema 2) |
 | Port | 18333 |
 | Nexus range | `>=0.1.8,<0.2.0` (tested on 0.1.9) |
 | Capabilities | `ui.application`, `storage.data`, `references.read`, `references.resolve` |

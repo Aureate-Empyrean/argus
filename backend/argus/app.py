@@ -354,10 +354,18 @@ def create_app(data_dir=None):
             raise HTTPException(422, "Invalid query")
         limit = max(1, min(limit, PAGE))
         with db.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM photos WHERE state=? AND (?='' OR id<?) ORDER BY id DESC LIMIT ?",
-                (state, cursor, cursor, limit + 1),
-            ).fetchall()
+            if state == "active":  # a timeline: when it was taken, or else when it was uploaded
+                rows = conn.execute(
+                    "SELECT * FROM photos WHERE state=? AND (?='' OR (COALESCE(taken_at, created_at), id) <"
+                    " (SELECT COALESCE(taken_at, created_at), id FROM photos WHERE id=?))"
+                    " ORDER BY COALESCE(taken_at, created_at) DESC, id DESC LIMIT ?",
+                    (state, cursor, cursor, limit + 1),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM photos WHERE state=? AND (?='' OR id<?) ORDER BY id DESC LIMIT ?",
+                    (state, cursor, cursor, limit + 1),
+                ).fetchall()
             more = len(rows) > limit
             rows = rows[:limit]
             items = [{**library.photo_view(r), "thumbnail": thumb(conn, r)} for r in rows]
@@ -376,6 +384,17 @@ def create_app(data_dir=None):
                 view["damaged"] = True
             view["original_available"] = store.has_original(row["blob"])
             return view
+
+    @app.get("/api/photos/{pid}/preview")
+    def photo_preview(pid: str):
+        """A sharper tile for the gallery, asked for only when a tile is on screen and large."""
+        with db.connect() as conn:
+            row = photo_or_404(conn, pid)
+            try:
+                data, w, h = library.rendition(conn, store, row, library.PREVIEW)
+            except library.Unavailable as exc:
+                raise HTTPException(404, "Not found") from exc
+            return {"src": library.data_url(data), "width": w, "height": h}
 
     @app.get("/api/photos/{pid}/usage")
     def photo_usage(pid: str):
@@ -894,6 +913,7 @@ def create_app(data_dir=None):
                 script,
                 (ROOT / "frontend/vendor/nexus-navigation.js").read_text(encoding="utf-8"),
                 (ROOT / "frontend/navigation.js").read_text(encoding="utf-8"),
+                (ROOT / "frontend/viewer.js").read_text(encoding="utf-8"),
             ]
         )
         return html.replace("/*STYLE*/", style).replace("/*SCRIPT*/", script)

@@ -15,6 +15,7 @@ DEFAULTS = {"max_upload_mb": 40, "max_megapixels": 32}
 LIMITS = {"max_upload_mb": (1, 200), "max_megapixels": (1, imaging.HARD_MAX_PIXELS // 1_000_000)}
 CHUNK = 768 * 1024  # raw bytes per upload chunk: ~1 MiB base64, inside the 2 MiB bridge limit
 THUMB = 320
+PREVIEW = 640  # gallery tiles on large or high-density screens; not one of the shared FIT_SIZES
 FIT_SIZES = (320, 1024, 1600)
 CROP_SIZES = (64, 128, 256, 512)
 MAX_CROP_DERIVATIVES = 24  # per photo; older crop renditions are evicted (they are caches)

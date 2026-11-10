@@ -24,7 +24,8 @@ const argusNavigation = EmpyreanNavigation.createClient({
   async apply(value, message) {
     const next = ArgusRoutes.parse(value);
     const reference = ArgusRoutes.serialize(next);
-    if (reference === shownRoute) return;
+    // An optimistically opened viewer whose address never landed still has to close.
+    if (reference === shownRoute && !(Viewer.isOpen() && next.view !== "photo")) return;
     if (!message.isCurrent()) return;
     shownRoute = reference;
     state.route = next;
@@ -38,15 +39,13 @@ const argusNavigation = EmpyreanNavigation.createClient({
   /* A photo's title saves itself when the field loses focus; a browser traversal does not blur it.
      A save that fails keeps the photo on screen and Nexus says so. */
   async beforeLeave() {
-    const title = $("#title");
-    if (!title || title.disabled || title.value.trim() === title.dataset.saved) return;
-    await api(`/photos/${state.route.id}`, "PATCH", { title: title.value.trim() });
-    title.dataset.saved = title.value.trim();
+    await Viewer.saveTitle();
   },
   captureView() {
     if (!state.route) return null;
     const view = { scroll: $("#sheet")?.scrollTop || 0, importPath: state.importPath ?? "" };
     if (state.route.view === "library" || state.route.view === "trash") view.loaded = state.items.length;
+    if (state.route.view === "photo") view.info = Viewer.infoOpen();
     if (state.route.view === "settings" && $("#max-mb")) view.settings = { mb: $("#max-mb").value, mp: $("#max-mp").value };
     return view;
   },
@@ -56,8 +55,14 @@ const argusNavigation = EmpyreanNavigation.createClient({
 });
 
 let navigationQueue = Promise.resolve();
+let queuedRoute = null; // the newest move still on its way, so a repeat is compared with it
 function queueNavigation(reference, mode) {
+  queuedRoute = reference;
   const next = navigationQueue.catch(() => {}).then(() => argusNavigation.navigate(reference, mode));
   navigationQueue = next;
+  const clear = () => {
+    if (navigationQueue === next) queuedRoute = null;
+  };
+  next.then(clear, clear);
   return next;
 }

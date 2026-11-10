@@ -7,6 +7,12 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* Meridian's durations and curves. Nothing waits for an animation to finish. */
+const MOTION = { fast: 120, page: 220, panel: 260, exit: 160, ease: "cubic-bezier(.22,1,.36,1)", exitEase: "cubic-bezier(.4,0,1,1)" };
+function animate(el, frames, duration = MOTION.page, easing = MOTION.ease, extra = {}) {
+  if (!el?.animate || reducedMotion()) return null;
+  return el.animate(frames, { duration, easing, ...extra });
+}
 
 // Filled by the server from frontend/icon.svg; the header and manifest share one asset.
 const ARGUS_ICON = "/*ARGUS_ICON*/";
@@ -23,6 +29,11 @@ const ICONS = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
   people: '<circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16c.5-3 2.5-4.5 5-4.5s4.5 1.500 5 4.500"/><path d="M13 4.500a2.800 2.800 0 0 1 0 5M14.500 11.800c1.600.6 2.700 2 3 4.200"/>',
   folder: '<path d="M3 5.500c0-.8.7-1.500 1.500-1.500h3.200l1.800 2h6c.8 0 1.500.7 1.500 1.500v7c0 .8-.7 1.500-1.500 1.500h-11c-.8 0-1.500-.7-1.500-1.500z"/>',
+  forward: '<path d="m8.500 4.500 5.500 5.500-5.500 5.500"/>',
+  minus: '<path d="M4.500 10h11"/>',
+  close: '<path d="m5.500 5.500 9 9M14.500 5.500l-9 9"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9.200v4.300M10 6.500v.1"/>',
+  expand: '<path d="M3.500 7.500v-4h4M16.500 7.500v-4h-4M3.500 12.500v4h4M16.500 12.500v4h-4"/>',
 };
 const icon = (n) => `<svg class="i" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ""}</svg>`;
 
@@ -53,7 +64,10 @@ function toast(message, tone = "") {
   el.className = `ae-toast ae-glass ${tone ? "ae-toast--" + tone : ""}`;
   el.textContent = message;
   $("#toasts").append(el);
-  setTimeout(() => el.remove(), 4200);
+  setTimeout(() => {
+    const leaving = animate(el, [{ opacity: 1 }, { opacity: 0, transform: "translateY(6px)" }], MOTION.exit, MOTION.exitEase);
+    leaving ? leaving.finished.finally(() => el.remove()) : el.remove();
+  }, 4200);
 }
 function confirmDialog(title, text, label, { danger = true } = {}) {
   const d = $("#dialog");
@@ -96,9 +110,13 @@ function routeFrom(path) {
  * shown when Nexus confirms it (frontend/navigation.js); otherwise it is shown directly. */
 function go(view, id = null, mode = "push") {
   // The screen already on show is refreshed instead: an identical address commits nothing.
-  if (argusNavigation.enabled && ArgusRoutes.serialize({ view, id }) !== shownRoute) {
-    return queueNavigation(ArgusRoutes.serialize({ view, id }), mode).catch((error) => {
-      if (!/superseded/i.test(error.message)) toast(error.message, "danger");
+  const target = ArgusRoutes.serialize({ view, id });
+  if (argusNavigation.enabled && queuedRoute === target) return;
+  if (argusNavigation.enabled && target !== (queuedRoute ?? shownRoute)) {
+    return queueNavigation(target, mode).catch((error) => {
+      if (/superseded/i.test(error.message)) return;
+      toast(error.message, "danger");
+      Viewer.resync();
     });
   }
   state.route = { view, id };
@@ -110,12 +128,22 @@ function shell() {
       <div class="brand"><span class="brand-mark"><img src="${ARGUS_ICON}" alt="" aria-hidden="true" width="32" height="32"></span><span class="brand-name">Argus</span></div>
       <nav id="nav" aria-label="Sections"></nav>
     </aside>
-    <main class="sheet" id="sheet"></main>`;
+    <main class="sheet" id="sheet"></main>
+    <section class="viewer" id="viewer" aria-label="Photo viewer" hidden></section>`;
 }
 function nav() {
   const r = state.route.view;
-  const item = (view, ic, text, count) => `<button class="nav-item" data-go="${view}" ${r === view || (view === "library" && r === "photo") ? 'aria-current="page"' : ""}>${icon(ic)}<span>${text}</span>${count ? `<span class="count">${count}</span>` : ""}</button>`;
-  $("#nav").innerHTML = item("library", "photos", "Photos", state.counts.active) + item("people", "people", "People") + item("import", "folder", "Import") + item("trash", "trash", "Trash", state.counts.trashed) + item("settings", "settings", "Settings");
+  const box = $("#nav");
+  const items = [["library", "photos", "Photos", state.counts.active], ["people", "people", "People"], ["import", "folder", "Import"], ["trash", "trash", "Trash", state.counts.trashed], ["settings", "settings", "Settings"]];
+  // Updated in place, so the highlight can move instead of being rebuilt.
+  if (!box.children.length) box.innerHTML = items.map(([view, ic, text]) => `<button class="nav-item" data-go="${view}">${icon(ic)}<span>${text}</span><span class="count" hidden></span></button>`).join("");
+  for (const [view, , , count] of items) {
+    const button = $(`[data-go="${view}"]`, box);
+    r === view || (view === "library" && r === "photo") ? button.setAttribute("aria-current", "page") : button.removeAttribute("aria-current");
+    const badge = $(".count", button);
+    badge.hidden = !count;
+    badge.textContent = count || "";
+  }
 }
 async function refreshState() {
   const s = await api("/state");
@@ -127,34 +155,66 @@ async function refreshState() {
 /* A newer render supersedes this one: a late response never paints over the current screen. */
 let renderToken = 0;
 const stale = (token) => token !== renderToken;
+let renderedView = null;
 async function render() {
   const token = ++renderToken;
-  const restoring = state.restoring;
+  let restoring = state.restoring;
   state.restoring = null;
   nav();
   const sheet = $("#sheet");
+  const view = state.route.view;
+  const changed = view !== renderedView;
   let outcome;
   const notFound = () => {
+    Viewer.close({ toTile: false });
+    state.galleryOf = null;
     sheet.innerHTML = `<div class="page"><div class="empty"><h3 data-heading tabindex="-1">This page could not be found</h3><p>The address may be wrong, or the photo may have been deleted.</p><button class="ae-btn" data-go="library">Back to Photos</button></div></div>`;
     outcome = "not-found";
   };
   try {
-    if (state.route.view === "not-found") notFound();
-    else if (state.route.view === "photo") await viewPhoto(sheet, state.route.id, token);
-    else if (state.route.view === "trash") await viewGrid(sheet, "trashed", token, restoring);
-    else if (state.route.view === "settings") viewSettings(sheet, restoring);
-    else if (state.route.view === "people") await viewPeople(sheet, token);
-    else if (state.route.view === "cluster") await viewCluster(sheet, state.route.id, token);
-    else if (state.route.view === "import") await viewImport(sheet, token);
+    if (view === "photo") {
+      await Viewer.show(state.route.id, token, restoring);
+      if (stale(token)) return;
+      renderedView = view;
+      $("#viewer [data-heading]")?.focus({ preventScroll: true });
+      return outcome;
+    }
+    const which = view === "trash" ? "trashed" : view === "library" ? "active" : null;
+    if (Viewer.isOpen()) {
+      // The gallery is still underneath, exactly as it was left: nothing needs loading again.
+      if (which && state.galleryOf === which && !state.galleryDirty) {
+        Viewer.close();
+        state.sheetRoute = { view };
+        renderedView = view;
+        return outcome;
+      }
+      if (which && state.galleryOf === which) restoring ||= { scroll: sheet.scrollTop, loaded: state.items.length };
+      Viewer.close({ toTile: false });
+    }
+    state.galleryOf = null;
+    sheet.ondragenter = sheet.ondragover = sheet.ondragleave = sheet.ondrop = null;
+    if (view === "not-found") notFound();
+    else if (view === "trash") await viewGrid(sheet, "trashed", token, restoring);
+    else if (view === "settings") viewSettings(sheet, restoring);
+    else if (view === "people") await viewPeople(sheet, token);
+    else if (view === "cluster") await viewCluster(sheet, state.route.id, token);
+    else if (view === "import") await viewImport(sheet, token);
     else await viewGrid(sheet, "active", token, restoring);
+    if (view !== "not-found") state.sheetRoute = { view, id: state.route.id };
   } catch (error) {
     if (stale(token)) return;
     if (/not found/i.test(error.message)) notFound();
-    else sheet.innerHTML = `<div class="page"><div class="empty"><h3>This could not be loaded</h3><p>${esc(error.message)}</p><button class="ae-btn" data-go="library">Back to Photos</button></div></div>`;
+    else {
+      Viewer.close({ toTile: false });
+      state.galleryOf = null;
+      sheet.innerHTML = `<div class="page"><div class="empty"><h3>This could not be loaded</h3><p>${esc(error.message)}</p><button class="ae-btn" data-go="library">Back to Photos</button></div></div>`;
+    }
   }
   if (stale(token)) return;
   sheet.scrollTop = restoring?.scroll || 0;
   $("[data-heading]", sheet)?.focus({ preventScroll: true });
+  if (changed && !restoring) animate($(".page", sheet), [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], MOTION.page);
+  renderedView = view;
   return outcome;
 }
 
@@ -164,11 +224,124 @@ const pickBand = () =>
 let apps = [];
 const appName = (id) => apps.find((a) => a.id === id)?.name || id;
 
-function tileHtml(p) {
-  return `<li><button class="tile" data-photo="${esc(p.id)}" aria-label="${esc(label(p))}, ${esc(p.width)} × ${esc(p.height)}">${p.thumbnail ? `<img src="${p.thumbnail}" alt="">` : `<span class="broken">Preview unavailable</span>`}<span class="caption">${esc(label(p))}</span></button></li>`;
+/* The gallery is a justified layout done by flexbox alone: a cell's share of its row is the photo's
+   aspect ratio, so every row is flush, nothing is distorted, and a resize costs no JavaScript. */
+function tileHtml(p, fresh = false) {
+  const ratio = Math.max(0.5, Math.min(3, p.width / p.height || 1)).toFixed(4);
+  return `<li class="tile-cell${fresh ? " is-fresh" : ""}" style="--a:${ratio}"><button class="tile" data-photo="${esc(p.id)}" aria-label="${esc(label(p))}, ${esc(p.width)} × ${esc(p.height)}">${p.thumbnail ? `<img src="${p.thumbnail}" alt="" decoding="async" draggable="false">` : `<span class="broken">Preview unavailable</span>`}<span class="caption">${esc(label(p))}</span></button></li>`;
 }
+const twoDigits = (n) => String(n).padStart(2, "0");
+const monthFormat = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" });
+/** Capture date when the file records a usable one; otherwise the upload date, and it says so. */
+function dayOf(p) {
+  const taken = !!p.taken_at && !Number.isNaN(Date.parse(p.taken_at));
+  const date = new Date(taken ? p.taken_at : p.created_at);
+  return { key: `${taken ? "t" : "u"}${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}`, month: `${date.getFullYear()}-${date.getMonth()}`, date, taken };
+}
+function dayHtml(day, cells) {
+  return `<section class="day" data-day="${day.key}" data-month="${day.month}"><h4 class="day-head">${esc(dayFormat.format(day.date))}${day.taken ? "" : '<span class="day-note">date uploaded</span>'}</h4><ul class="day-tiles">${cells}</ul></section>`;
+}
+const monthHtml = (day) => `<h3 class="month-head">${esc(monthFormat.format(day.date))}</h3>`;
+function timelineHtml(items, fresh) {
+  let html = "";
+  let month = null;
+  for (let i = 0; i < items.length; ) {
+    const day = dayOf(items[i]);
+    let cells = "";
+    for (; i < items.length && dayOf(items[i]).key === day.key; i++) cells += tileHtml(items[i], fresh?.has(items[i].id));
+    if (day.month !== month) html += monthHtml(day);
+    month = day.month;
+    html += dayHtml(day, cells);
+  }
+  return html;
+}
+const flatHtml = (items) => `<section class="day" data-day="all"><ul class="day-tiles">${items.map((p) => tileHtml(p)).join("")}</ul></section>`;
+function appendTiles(items) {
+  const grid = $("#grid");
+  if (!grid) return;
+  if (state.itemsOf !== "active") {
+    $('[data-day="all"] .day-tiles', grid).insertAdjacentHTML("beforeend", items.map((p) => tileHtml(p)).join(""));
+  } else {
+    for (const p of items) {
+      const day = dayOf(p);
+      const last = grid.lastElementChild;
+      if (last?.dataset.day === day.key) $(".day-tiles", last).insertAdjacentHTML("beforeend", tileHtml(p));
+      else grid.insertAdjacentHTML("beforeend", (last?.dataset.month === day.month ? "" : monthHtml(day)) + dayHtml(day, tileHtml(p)));
+    }
+  }
+  watchTiles();
+}
+/* Loading further: by scrolling near the end, or by the button, or when the viewer runs out. */
+let loadingMore = null;
+function loadMore() {
+  if (!state.cursor) return Promise.resolve(false);
+  loadingMore ||= (async () => {
+    try {
+      const which = state.itemsOf;
+      const page = await api(`/photos?state=${which}&cursor=${state.cursor}`);
+      if (which !== state.itemsOf) return false;
+      state.items.push(...page.items);
+      state.cursor = page.next_cursor;
+      if (state.galleryOf === which) appendTiles(page.items);
+      const more = $(".more");
+      if (more) more.hidden = !state.cursor;
+      return true;
+    } finally {
+      loadingMore = null;
+    }
+  })();
+  return loadingMore;
+}
+/* A sharper picture only for tiles that are on screen and larger than the thumbnail. */
+const previews = new Map();
+const previewQueue = [];
+let previewsRunning = 0;
+function pumpPreviews() {
+  while (previewsRunning < 2 && previewQueue.length) {
+    const img = previewQueue.pop();
+    if (!img.isConnected) continue;
+    previewsRunning++;
+    const id = img.closest("[data-photo]").dataset.photo;
+    (previews.has(id) ? Promise.resolve(previews.get(id)) : api(`/photos/${id}/preview`).then((r) => r.src))
+      .then((src) => {
+        previews.set(id, src);
+        if (previews.size > 240) previews.delete(previews.keys().next().value);
+        const next = new Image();
+        next.src = src;
+        return Promise.resolve(next.decode?.()).catch(() => {}).then(() => {
+          if (img.isConnected) img.src = src;
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        previewsRunning--;
+        pumpPreviews();
+      });
+  }
+}
+const previewWatcher = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    previewWatcher.unobserve(entry.target);
+    const dense = devicePixelRatio || 1;
+    if (Math.max(entry.target.clientWidth, entry.target.clientHeight) * dense > 340) previewQueue.push(entry.target);
+  }
+  pumpPreviews();
+}, { rootMargin: "200px" });
+const moreWatcher = new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting) && !Viewer.isOpen()) loadMore().catch((error) => toast(error.message, "danger"));
+}, { rootMargin: "900px" });
+function watchTiles() {
+  for (const img of $$("#grid .tile img:not([data-watched])")) {
+    img.dataset.watched = "1";
+    previewWatcher.observe(img);
+  }
+}
+const skeleton = () => `<div class="page gallery-page"><div class="gallery-bar is-skeleton"></div><div class="skeleton" aria-hidden="true">${[1.5, 0.75, 1.33, 1, 1.5, 1.78, 0.67, 1.33, 1.5, 1, 0.75, 1.5].map((a) => `<span style="--a:${a}"></span>`).join("")}</div></div>`;
 async function viewGrid(sheet, which, token, restoring) {
   const trash = which === "trashed";
+  if (!sheet.firstChild && !restoring) sheet.innerHTML = skeleton();
   const page = await api(`/photos?state=${which}`);
   if (stale(token)) return;
   const items = page.items;
@@ -182,39 +355,90 @@ async function viewGrid(sheet, which, token, restoring) {
   }
   state.items = items;
   state.cursor = cursor;
+  state.itemsOf = which;
   const count = trash ? state.counts.trashed : state.counts.active;
-  sheet.innerHTML = `<div class="page">
+  const fresh = state.freshIds;
+  state.freshIds = null;
+  const hero = !trash && !items.length;
+  sheet.innerHTML = `<div class="page gallery-page">
     ${trash ? "" : pickBand()}
-    <header class="head"><div><p class="eyebrow">${trash ? "Trash" : "Library"}</p><h2 class="display" data-heading tabindex="-1">${trash ? "Trash" : "Photos"}</h2>
+    <header class="gallery-bar"><div class="gallery-name"><h2 class="gallery-title" data-heading tabindex="-1">${trash ? "Trash" : "Photos"}</h2>
       <p class="meta">${count === 1 ? "1 photo" : `${count} photos`}${trash ? " · restore them, or delete them for good" : ""}</p></div>
-      ${trash ? "" : `<div class="tools"><button class="ae-btn ae-btn--primary" data-act="choose">${icon("upload")}<span>Upload photos</span></button></div>`}</header>
-    ${trash ? "" : `<input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
-      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Upload photos: drop files here or press Enter to choose">${icon("upload")}<strong>Drop photos here</strong><small>JPEG, PNG, WebP or GIF · up to ${esc(state.settings?.max_upload_mb)} MB and ${esc(state.settings?.max_megapixels)} megapixels each. Originals are kept exactly as uploaded.</small></div>
-      <ul class="uploads" id="uploads" aria-live="polite"></ul>`}
-    ${state.items.length ? `<ul class="grid" id="grid">${state.items.map(tileHtml).join("")}</ul>` : `<div class="empty"><h3>${trash ? "Trash is empty" : "No photos yet"}</h3><p>${trash ? "Photos you move to Trash wait here until you restore them or delete them for good." : "Upload your first photos. They stay private to you and to the applications you allow."}</p></div>`}
-    <div class="more" ${state.cursor ? "" : "hidden"}><button class="ae-btn" data-act="more" data-state="${which}">Show more</button></div>
+      ${trash || hero ? "" : `<div class="tools"><button class="ae-btn ae-btn--primary" data-act="choose">${icon("upload")}<span>Upload</span></button></div>`}</header>
+    ${trash ? "" : `<input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>`}
+    ${items.length ? `<div class="timeline" id="grid">${trash ? flatHtml(items) : timelineHtml(items, fresh)}</div>`
+      : trash ? `<div class="empty"><h3>Trash is empty</h3><p>Photos you move to Trash wait here until you restore them or delete them for good.</p></div>`
+      : `<div class="empty empty-hero" id="drop" tabindex="0" role="button" aria-label="Upload photos: drop files here or press Enter to choose">${icon("photos")}<h3>Your photographs start here</h3><p>Drop photos anywhere on this page, or choose them. They stay private to you and to the applications you allow.</p><span class="ae-btn ae-btn--primary">${icon("upload")}<span>Upload photos</span></span><small>JPEG, PNG, WebP or GIF · up to ${esc(state.settings?.max_upload_mb)} MB and ${esc(state.settings?.max_megapixels)} megapixels each. Originals are kept exactly as uploaded.</small></div>`}
+    <div class="more" ${state.cursor ? "" : "hidden"}><button class="ae-btn" data-act="more">Show more</button></div>
+    ${trash ? "" : `<div class="drop-veil" id="drop-veil" hidden><div>${icon("upload")}<strong>Drop to upload</strong></div></div>`}
   </div>`;
-  if (!trash) bindUpload();
+  state.galleryOf = which;
+  state.galleryDirty = false;
+  if (!trash) bindUpload(sheet);
   renderUploads();
+  watchTiles();
+  moreWatcher.disconnect();
+  if ($(".more")) moreWatcher.observe($(".more"));
+  if (!restoring && !fresh) $$(".tile-cell", sheet).slice(0, 24).forEach((cell, i) => animate(cell, [{ opacity: 0 }, { opacity: 1 }], MOTION.page, MOTION.ease, { delay: Math.min(i, 10) * 12, fill: "backwards" }));
 }
 
 /* ── Upload: files go up in chunks (module requests are limited to 2 MiB) ── */
-function bindUpload() {
-  const drop = $("#drop");
+function bindUpload(sheet) {
   const input = $("#file");
-  input.onchange = () => queue([...input.files]);
-  drop.onclick = () => input.click();
-  drop.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), input.click());
-  for (const t of ["dragenter", "dragover"]) drop.addEventListener(t, (e) => (e.preventDefault(), drop.classList.add("is-over")));
-  for (const t of ["dragleave", "drop"]) drop.addEventListener(t, () => drop.classList.remove("is-over"));
-  drop.addEventListener("drop", (e) => (e.preventDefault(), queue([...e.dataTransfer.files])));
+  input.onchange = () => {
+    queue([...input.files]);
+    input.value = "";
+  };
+  const drop = $("#drop");
+  if (drop) {
+    drop.onclick = () => input.click();
+    drop.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), input.click());
+  }
+  // The whole page accepts a drop; the large target exists only while the library is empty.
+  const veil = $("#drop-veil");
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  let depth = 0;
+  sheet.ondragenter = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (depth++ === 0) veil.hidden = false;
+  };
+  sheet.ondragover = (e) => hasFiles(e) && e.preventDefault();
+  sheet.ondragleave = (e) => {
+    if (hasFiles(e) && --depth <= 0) (depth = 0), (veil.hidden = true);
+  };
+  sheet.ondrop = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    veil.hidden = true;
+    queue([...e.dataTransfer.files]);
+  };
 }
+/* One row per file, updated in place so its bar moves smoothly. */
 function renderUploads() {
-  const list = $("#uploads");
-  if (!list) return;
-  list.innerHTML = state.uploads
-    .map((u) => `<li><span class="name">${esc(u.name)}</span><span class="state ${u.error ? "bad" : ""}">${esc(u.error || u.status)}</span><span class="bar"><span style="--p:${Math.round(u.progress * 100)}%"></span></span></li>`)
-    .join("");
+  let list = $("#uploads");
+  if (!state.uploads.length) return list?.remove();
+  if (!list) {
+    list = Object.assign(document.createElement("ul"), { id: "uploads", className: "uploads ae-glass" });
+    list.setAttribute("aria-live", "polite");
+    $("#app").append(list);
+  }
+  for (const u of state.uploads) {
+    if (!u.row) {
+      u.row = document.createElement("li");
+      u.row.innerHTML = `<span class="name"></span><span class="state"></span><span class="bar"><span></span></span>`;
+      $(".name", u.row).textContent = u.name;
+      list.append(u.row);
+      animate(u.row, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], MOTION.page);
+    }
+    const stateEl = $(".state", u.row);
+    stateEl.textContent = u.error || u.status;
+    stateEl.classList.toggle("bad", !!u.error);
+    u.row.classList.toggle("is-done", u.status === "Added" || u.status === "Already in your library");
+    $(".bar span", u.row).style.transform = `scaleX(${u.progress})`;
+  }
+  for (const row of [...list.children]) if (!state.uploads.some((u) => u.row === row)) row.remove();
 }
 function b64(bytesArray) {
   let s = "";
@@ -240,12 +464,19 @@ async function queue(files) {
   }
   uploading = false;
   await refreshState();
-  if (state.route.view === "library") {
-    const done = state.uploads.filter((u) => !u.error);
-    state.uploads = state.uploads.filter((u) => u.error);
+  const done = state.uploads.filter((u) => !u.error);
+  const added = done.filter((u) => u.status === "Added");
+  state.uploads = state.uploads.filter((u) => u.error);
+  if (added.length) toast(added.length === 1 ? "1 photo added" : `${added.length} photos added`, "good");
+  state.freshIds = new Set(added.map((u) => u.photoId));
+  renderUploads();
+  if (state.route.view === "library" && !Viewer.isOpen()) {
     await render();
     if (state.pick && done.length === 1 && last) go("photo", last.id);
-  } else nav();
+  } else {
+    state.galleryDirty = true;
+    nav();
+  }
 }
 async function uploadOne(u, { quiet = false } = {}) {
   u.status = "Uploading";
@@ -262,45 +493,14 @@ async function uploadOne(u, { quiet = false } = {}) {
   renderUploads();
   const result = await api(`/uploads/${start.id}/finish${u.source ? `?source=${encodeURIComponent(u.source)}` : ""}`, "POST");
   u.status = result.duplicate ? "Already in your library" : "Added";
+  u.photoId = result.photo.id;
+  u.progress = 1;
+  renderUploads();
   if (result.duplicate && !quiet) toast(`${u.name} is already in your library`);
   return result.photo;
 }
 
-/* ── One photo ── */
-async function viewPhoto(sheet, id, token) {
-  const p = await api(`/photos/${id}`);
-  if (stale(token)) return;
-  const trashed = p.state === "trashed";
-  const fact = (k, v) => (v ? `<dt>${esc(k)}</dt><dd>${v}</dd>` : "");
-  sheet.innerHTML = `<div class="page">
-    ${!trashed ? pickBand() : ""}
-    <header class="head"><div><p class="eyebrow"><button class="ae-btn ae-btn--quiet ae-btn--sm" data-go="${trashed ? "trash" : "library"}">${icon("back")}<span>${trashed ? "Trash" : "Photos"}</span></button></p>
-      <h2 class="display" data-heading tabindex="-1">${esc(label(p))}</h2><p class="meta">${esc(p.width)} × ${esc(p.height)} · ${esc(p.format)} · ${bytes(p.bytes)}${trashed ? " · in Trash" : ""}</p></div>
-      <div class="tools">${state.pick && !trashed ? `<button class="ae-btn ae-btn--primary" data-act="use" data-id="${esc(p.id)}">${icon("check")}<span>Use this photo</span></button>` : ""}</div></header>
-    <div class="photo">
-      <div class="stage">${p.display ? `<img src="${p.display.src}" alt="${esc(label(p))}">` : `<div class="empty"><h3>The picture cannot be shown</h3><p>${p.original_available ? "Its preview could not be made." : "Its original file is missing from storage. The record is kept so nothing that refers to it breaks."}</p></div>`}</div>
-      <section class="facts" aria-label="About this photo">
-        <div class="ae-field"><label class="ae-label" for="title">Title</label><input class="ae-input" id="title" maxlength="200" value="${esc(p.title)}" placeholder="Add a title" ${trashed ? "disabled" : ""}></div>
-        <dl>${fact("Taken", esc(when(p.taken_at)))}${fact("Camera", esc(p.camera))}${fact("Size", `${esc(p.width)} × ${esc(p.height)} px`)}${fact("File", `${esc(p.filename || "—")} · ${esc(p.format)} · ${bytes(p.bytes)}`)}${fact("Uploaded", esc(when(p.created_at)))}${fact("Location", p.has_location ? "Recorded in the original file; never shown to other applications" : "")}${p.animated ? fact("Animation", "Still images are made from the first frame") : ""}</dl>
-        <p class="section-label">People in this photo</p><div id="face-panel"></div>
-        <p class="section-label">Linked from other modules</p><ul class="usage" id="usage"><li>Checking…</li></ul>
-        <div class="actions">
-          ${p.original_available ? `<button class="ae-btn" data-act="download" data-id="${esc(p.id)}">${icon("download")}<span>Download original</span></button>` : ""}
-          ${trashed ? `<button class="ae-btn" data-act="restore" data-id="${esc(p.id)}">${icon("restore")}<span>Restore</span></button><button class="ae-btn ae-btn--danger" data-act="purge" data-id="${esc(p.id)}">${icon("trash")}<span>Delete for good</span></button>` : `<button class="ae-btn ae-btn--quiet" data-act="trash" data-id="${esc(p.id)}">${icon("trash")}<span>Move to Trash</span></button>`}
-        </div>
-      </section>
-    </div></div>`;
-  const title = $("#title");
-  title.dataset.saved = title.value.trim();
-  title.onchange = async () => {
-    if (title.value.trim() === title.dataset.saved) return;
-    await api(`/photos/${id}`, "PATCH", { title: title.value.trim() });
-    title.dataset.saved = title.value.trim();
-    toast("Title saved", "good");
-  };
-  usageInto(id);
-  loadPhotoFaces(id).catch(() => {});
-}
+/* ── One photo: frontend/viewer.js ── */
 async function usageInto(id) {
   const box = $("#usage");
   try {
@@ -379,28 +579,30 @@ document.addEventListener("click", async (event) => {
   try {
     if (el.dataset.go) return go(el.dataset.go);
     if (el.dataset.cluster) return go("cluster", el.dataset.cluster);
-    if (el.dataset.photo && !el.dataset.act) return go("photo", el.dataset.photo);
+    if (el.dataset.photo && !el.dataset.act) {
+      if (el.matches(".tile")) Viewer.openFrom(el, el.dataset.photo);
+      return go("photo", el.dataset.photo);
+    }
     const act = el.dataset.act;
     const id = el.dataset.id;
     if (act === "choose") return $("#file").click();
-    if (act === "more") {
-      const page = await api(`/photos?state=${el.dataset.state}&cursor=${state.cursor}`);
-      state.cursor = page.next_cursor;
-      $("#grid").insertAdjacentHTML("beforeend", page.items.map(tileHtml).join(""));
-      el.parentElement.hidden = !state.cursor;
-      return;
-    }
+    if (act === "more") return loadMore();
+    if (act.startsWith("viewer-")) return Viewer.action(act);
     if (act === "download") return download(id);
     if (act === "open-usage") return bridge("navigate", { module: el.dataset.module, path: el.dataset.path });
     if (act === "trash") {
       await api(`/photos/${id}`, "DELETE");
       await refreshState();
+      Viewer.forget(id);
+      state.galleryDirty = true;
       toast("Moved to Trash. Applications that use it show their own placeholder until you restore it.");
       return go("library", null, "replace");
     }
     if (act === "restore") {
       await api(`/photos/${id}/restore`, "POST");
       await refreshState();
+      Viewer.forget(id);
+      state.galleryDirty = true;
       toast("Restored", "good");
       return go("photo", id);
     }
@@ -416,6 +618,8 @@ document.addEventListener("click", async (event) => {
       if (!(await confirmDialog("Delete this photo for good?", `${why}<p>The original file is removed and cannot be recovered, unless another photo shares the same bytes.</p>`, "Delete for good"))) return;
       await api(`/photos/${id}/purge?confirm=true`, "DELETE");
       await refreshState();
+      Viewer.forget(id);
+      state.galleryDirty = true;
       toast("Deleted for good");
       return go("trash", null, "replace");
     }
@@ -515,7 +719,7 @@ async function viewPeople(sheet, token) {
   }
   const { items } = await api("/faces/clusters");
   if (stale(token)) return;
-  sheet.innerHTML = `<div class="page">${head}${items.length ? `<ul class="clusters">${items.map((c) => `<li><button class="cluster" data-cluster="${esc(c.id)}"><span class="cluster-faces">${c.faces.map((f) => (f.thumb ? `<img src="${f.thumb}" alt="">` : "")).join("")}</span><strong>${esc(c.person_label || "Not named yet")}</strong><span class="meta">${c.count === 1 ? "1 photo" : `${c.count} photos`}</span></button></li>`).join("")}</ul>` : `<div class="empty"><h3>No faces found yet</h3><p>Scanning continues in the background.</p></div>`}</div>`;
+  sheet.innerHTML = `<div class="page">${head}${items.length ? `<ul class="clusters">${items.map((c) => `<li><button class="cluster" data-cluster="${esc(c.id)}"><span class="cluster-faces">${c.faces.slice(0, 3).map((f) => (f.thumb ? `<img src="${f.thumb}" alt="">` : "")).join("")}</span><strong>${esc(c.person_label || "Not named yet")}</strong><span class="meta">${c.count === 1 ? "1 photo" : `${c.count} photos`}</span></button></li>`).join("")}</ul>` : `<div class="empty"><h3>No faces found yet</h3><p>Scanning continues in the background.</p></div>`}</div>`;
 }
 function personPicker(id) {
   return `<div class="person-pick"><input class="ae-input" id="pick-${id}" data-person-search="${id}" type="search" placeholder="Search people in Meridian" aria-label="Search people in Meridian" autocomplete="off" maxlength="100"><div class="person-results" id="results-${id}"></div></div>`;
@@ -554,25 +758,13 @@ async function loadPhotoFaces(id) {
   const status = await api("/faces/status").catch(() => null);
   if (!panel || !status) return;
   const { items } = await api(`/photos/${id}/faces`);
-  const stage = $(".stage");
-  const img = $(".stage img");
+  if (!panel.isConnected || Viewer.currentId() !== id) return;
+  const canvas = $("#v-canvas");
   let layer = $("#face-layer");
-  if (img && !layer) {
+  if (canvas && !canvas.hidden && !layer) {
     layer = document.createElement("div");
     layer.id = "face-layer";
-    stage.classList.add("has-faces");
-    stage.append(layer);
-  }
-  const place = () => {
-    if (!layer || !img) return;
-    const r = img.getBoundingClientRect();
-    const s = stage.getBoundingClientRect();
-    Object.assign(layer.style, { left: `${r.left - s.left}px`, top: `${r.top - s.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-  };
-  if (img) {
-    if (img.complete) place();
-    img.onload = place;
-    window.addEventListener("resize", place);
+    canvas.append(layer);
   }
   if (layer) layer.innerHTML = items.map((f) => `<button class="face-box is-${f.status}" data-act="face-select" data-id="${esc(f.id)}" style="left:${f.box.x * 100}%;top:${f.box.y * 100}%;width:${f.box.w * 100}%;height:${f.box.h * 100}%" aria-label="${esc(faceCaption(f))}"><span>${esc(faceCaption(f))}</span></button>`).join("");
   state.photoFaces = { id, items };
@@ -594,6 +786,7 @@ function photoFaceRow(f) {
 function startMarking(photoId) {
   const layer = $("#face-layer");
   if (!layer) return toast("The picture is not available to mark.", "danger");
+  Viewer.ensureInfo();
   layer.classList.add("is-marking");
   toast("Drag a box around the face.");
   let start = null;
@@ -641,7 +834,7 @@ function openFacePicker(id) {
   $("input", holder).focus();
 }
 async function afterFaceChange() {
-  if (state.route.view === "photo") return loadPhotoFaces(state.route.id);
+  if (state.route.view === "photo") return loadPhotoFaces(Viewer.currentId());
   return render();
 }
 async function peopleAction(act, el) {

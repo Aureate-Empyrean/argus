@@ -182,6 +182,7 @@ for d in glob.glob("/data/import/*"):
 
   // One photograph: boxes, exclude, undo, mark a missed face, name it.
   await a.evaluate((id) => go("photo", id), facePhoto);
+  await pane.locator("#v-info-toggle").click(); // face boxes and their controls live with the details
   await pane.locator(".face-box").first().waitFor({ timeout: 20000 });
   await sleep(300);
   await page.screenshot({ path: path.join(SHOTS, "photo-faces-1440.png") });
