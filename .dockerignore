@@ -3,6 +3,7 @@
 node_modules
 artifacts
 .data
+**/__pycache__
 .pytest_cache
 .ruff_cache
 .agents
