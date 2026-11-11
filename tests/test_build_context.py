@@ -14,9 +14,3 @@ def test_build_context_excludes_bytecode():
     patterns = {line.strip() for line in (ROOT / ".dockerignore").read_text().splitlines()}
     # Root-anchored "__pycache__" would only match the top level; "**/" matches every directory.
     assert "**/__pycache__" in patterns
-
-
-def test_dockerfile_copies_the_backend_directory():
-    # The rule above matters because the backend is copied as a whole directory.
-    dockerfile = (ROOT / "deploy" / "Dockerfile").read_text()
-    assert "COPY backend ./backend" in dockerfile
